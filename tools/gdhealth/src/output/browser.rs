@@ -217,9 +217,11 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
         })
         .collect::<Vec<_>>();
 
+    let node_id_set: BTreeSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
     let links = graph
         .edges
         .iter()
+        .filter(|edge| node_id_set.contains(edge.from.as_str()) && node_id_set.contains(edge.to.as_str()))
         .map(|edge| BrowserLink {
             source: edge.from.clone(),
             target: edge.to.clone(),
@@ -227,6 +229,7 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
             line: edge.line,
         })
         .collect::<Vec<_>>();
+    let file_link_count = links.len();
 
     let total_sloc = nodes.iter().map(|node| node.line_count).sum::<usize>();
     let file_cluster_metrics_map = build_cluster_metrics(&nodes, total_sloc);
@@ -300,7 +303,7 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
                 },
                 statistics: GraphStatistics {
                     node_count: graph.files.len(),
-                    edge_count: graph.edges.len(),
+                    edge_count: file_link_count,
                     cycle_count: graph.cycles.len(),
                     parser_warning_count: graph.parser_warnings.len(),
                     community_count: file_graph_metrics.community_count,
@@ -381,8 +384,10 @@ fn build_entity_graph_export(
             }
         })
         .collect::<Vec<_>>();
+    let entity_id_set: BTreeSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
     let links = edges
         .iter()
+        .filter(|edge| entity_id_set.contains(edge.from.as_str()) && entity_id_set.contains(edge.to.as_str()))
         .map(|edge| BrowserLink {
             source: edge.from.clone(),
             target: edge.to.clone(),
@@ -390,6 +395,7 @@ fn build_entity_graph_export(
             line: edge.line,
         })
         .collect::<Vec<_>>();
+    let entity_link_count = links.len();
     let cluster_metrics_map = build_cluster_metrics(&nodes, total_sloc);
     let community_count = communities
         .iter()
@@ -407,7 +413,7 @@ fn build_entity_graph_export(
         },
         statistics: GraphStatistics {
             node_count: entities.len(),
-            edge_count: edges.len(),
+            edge_count: entity_link_count,
             cycle_count: 0,
             parser_warning_count: 0,
             community_count,
@@ -522,7 +528,7 @@ fn build_cluster_metrics(
         entry.total_function_count += node.function_count;
     }
 
-    accumulators
+    let mut result: BTreeMap<String, ClusterMetrics> = accumulators
         .into_iter()
         .map(|(community_id, mut accumulator)| {
             accumulator.files.sort();
@@ -547,7 +553,21 @@ fn build_cluster_metrics(
                 },
             )
         })
-        .collect()
+        .collect();
+    deduplicate_cluster_labels(&mut result);
+    result
+}
+
+fn deduplicate_cluster_labels(map: &mut BTreeMap<String, ClusterMetrics>) {
+    let mut label_counts: BTreeMap<String, usize> = BTreeMap::new();
+    for metrics in map.values() {
+        *label_counts.entry(metrics.label.clone()).or_insert(0) += 1;
+    }
+    for metrics in map.values_mut() {
+        if label_counts.get(&metrics.label).copied().unwrap_or(0) > 1 {
+            metrics.label = format!("{} #{}", metrics.label, metrics.community_id);
+        }
+    }
 }
 
 fn derive_cluster_label(files: &[String]) -> String {
@@ -730,6 +750,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       display: block;
       font-size: 1.3rem;
     }}
+    [title] {{ cursor: help; }}
     .clusters, .files {{
       display: flex;
       flex-direction: column;
@@ -914,13 +935,13 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
     function renderStats() {{
       const cards = [
-        ['Nodes', stats.node_count],
-        ['Edges', stats.edge_count],
-        ['Clusters', stats.community_count],
-        ['SLOC', stats.total_sloc],
+        ['Nodes', stats.node_count, '.gd files analyzed in this graph.'],
+        ['Edges', stats.edge_count, 'Dependency connections (preload / load / extends) between files. Higher = more coupled.'],
+        ['Clusters', stats.community_count, 'File groups detected by Louvain community detection. Ideal: a handful of cohesive clusters. Many tiny clusters = low cohesion.'],
+        ['SLOC', stats.total_sloc, 'Source Lines of Code across all files (includes blanks and comments).'],
       ];
-      statsEl.innerHTML = cards.map(([label, value]) => `
-        <div class="stat">
+      statsEl.innerHTML = cards.map(([label, value, tip]) => `
+        <div class="stat" title="${{tip}}">
           <span class="meta">${{label}}</span>
           <strong>${{value}}</strong>
         </div>
@@ -934,7 +955,12 @@ fn render_html(data_json: &str, project_name: &str) -> String {
             <span class="swatch" style="background:${{colorForCommunity(cluster.community_id)}}"></span>
             ${{cluster.label || `Cluster ${{cluster.community_id}}`}}
           </div>
-          <div class="meta">${{cluster.node_count}} files, ${{cluster.total_sloc}} SLOC, fan-in ${{formatNumber(cluster.avg_fan_in)}} / fan-out ${{formatNumber(cluster.avg_fan_out)}}</div>
+          <div class="meta">
+            <span title="Number of .gd files grouped in this cluster by community detection.">${{cluster.node_count}} files</span>,
+            <span title="Source Lines of Code total. Ideal: balanced across clusters. Clusters over 500 SLOC are good refactor candidates.">${{cluster.total_sloc}} SLOC</span>,
+            <span title="Average fan-in: how many OTHER files import files from this cluster. High = stable API used by many, but risky to change. Ideal avg 1-4. Over 8 = consider extracting a stable interface.">fan-in ${{formatNumber(cluster.avg_fan_in)}}</span> /
+            <span title="Average fan-out: how many files each file in this cluster imports on average. High = too many responsibilities. Ideal avg 0-3. Over 6 = consider splitting.">fan-out ${{formatNumber(cluster.avg_fan_out)}}</span>
+          </div>
         </button>
       `).join('');
 
@@ -982,10 +1008,10 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <h3>${{cluster.label || `Cluster ${{cluster.community_id}}`}}</h3>
           <p class="meta">${{cluster.node_count}} files, ${{cluster.total_sloc}} SLOC, ${{cluster.percent_total_sloc.toFixed(1)}}% of project SLOC</p>
           <div class="detail-grid">
-            <div class="detail-card"><span class="meta">Avg fan-in</span><strong>${{formatNumber(cluster.avg_fan_in)}}</strong></div>
-            <div class="detail-card"><span class="meta">Avg fan-out</span><strong>${{formatNumber(cluster.avg_fan_out)}}</strong></div>
-            <div class="detail-card"><span class="meta">Avg functions</span><strong>${{formatNumber(cluster.avg_function_count)}}</strong></div>
-            <div class="detail-card"><span class="meta">Files</span><strong>${{cluster.node_count}}</strong></div>
+            <div class="detail-card" title="Average fan-in: how many files import from this cluster per file. High = widely used, but costly to change. Ideal 1-4. Over 8 = extract a stable interface."><span class="meta">Avg fan-in</span><strong>${{formatNumber(cluster.avg_fan_in)}}</strong></div>
+            <div class="detail-card" title="Average fan-out: how many files each file here imports. High = many responsibilities. Ideal 0-3. Over 6 = split the cluster."><span class="meta">Avg fan-out</span><strong>${{formatNumber(cluster.avg_fan_out)}}</strong></div>
+            <div class="detail-card" title="Average number of functions per file. Ideal 5-15. Over 25 per file = consider splitting."><span class="meta">Avg functions</span><strong>${{formatNumber(cluster.avg_function_count)}}</strong></div>
+            <div class="detail-card" title="Total .gd files in this cluster."><span class="meta">Files</span><strong>${{cluster.node_count}}</strong></div>
           </div>
           <p class="meta">${{cluster.files.slice(0, 8).join('<br>')}}</p>
         `;
@@ -997,12 +1023,12 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         <h3>${{node.display_name}}</h3>
         <p class="meta">${{node.absolute_name}}</p>
         <div class="detail-grid">
-          <div class="detail-card"><span class="meta">Lines</span><strong>${{node.line_count}}</strong></div>
-          <div class="detail-card"><span class="meta">Fan-in</span><strong>${{node.metric_fan_in_dependency_graph}}</strong></div>
-          <div class="detail-card"><span class="meta">Fan-out</span><strong>${{node.metric_fan_out_dependency_graph}}</strong></div>
-          <div class="detail-card"><span class="meta">Community</span><strong>${{node.community_id}}</strong></div>
-          <div class="detail-card"><span class="meta">Functions</span><strong>${{node.function_count}}</strong></div>
-          <div class="detail-card"><span class="meta">Hotspot</span><strong>${{node.metric_file_hotspot_score}}</strong></div>
+          <div class="detail-card" title="Total lines in this file (including blank lines and comments)."><span class="meta">Lines</span><strong>${{node.line_count}}</strong></div>
+          <div class="detail-card" title="Fan-in: how many other files import or preload this one. High = many dependents, risky to modify. Ideal 0-3. Over 8 = consider extracting a stable interface or autoload."><span class="meta">Fan-in</span><strong>${{node.metric_fan_in_dependency_graph}}</strong></div>
+          <div class="detail-card" title="Fan-out: how many files this script imports or preloads. High = too many responsibilities. Ideal 0-4. Over 8 = split this file."><span class="meta">Fan-out</span><strong>${{node.metric_fan_out_dependency_graph}}</strong></div>
+          <div class="detail-card" title="Louvain cluster ID. Files with the same ID are tightly related by dependency patterns and were grouped together automatically."><span class="meta">Community</span><strong>${{node.community_id}}</strong></div>
+          <div class="detail-card" title="Number of functions and methods in this file. Ideal 5-15. Over 25 = consider splitting into smaller scripts or using composition."><span class="meta">Functions</span><strong>${{node.function_count}}</strong></div>
+          <div class="detail-card" title="Hotspot score: weighted signal combining dependencies, size, and cycle membership. Higher = more likely to cause bugs when changed. Ideal under 10. Over 20 = refactor priority."><span class="meta">Hotspot</span><strong>${{node.metric_file_hotspot_score}}</strong></div>
         </div>
         <p class="meta">Group: ${{node.group}} | Parser warnings: ${{node.parser_warning_count}} | Cycle member: ${{node.has_cycle ? 'yes' : 'no'}}</p>
       `;
@@ -1191,17 +1217,24 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       const visibleLinks = links.filter(link => visibleIds.has(link.source) && visibleIds.has(link.target));
       const selectedNode = getSelectedNode();
       const neighborSet = buildNeighborSet(selectedNode);
-      linkLayer.innerHTML = visibleLinks.map(link => `
-        <line
-          x1="${{link.sourceNode.x.toFixed(1)}}"
-          y1="${{link.sourceNode.y.toFixed(1)}}"
-          x2="${{link.targetNode.x.toFixed(1)}}"
-          y2="${{link.targetNode.y.toFixed(1)}}"
-          stroke="${{selectedNode && (link.source === selectedNode.id || link.target === selectedNode.id) ? 'var(--accent-2)' : 'var(--edge)'}}"
-          stroke-width="${{selectedNode && (link.source === selectedNode.id || link.target === selectedNode.id) ? 3.2 : 1.2}}"
-          stroke-opacity="${{selectedNode && !(link.source === selectedNode.id || link.target === selectedNode.id) ? 0.08 : 0.9}}"
-        />
-      `).join('');
+      linkLayer.innerHTML = visibleLinks.map(link => {{
+        const isActive = !!(selectedNode && (link.source === selectedNode.id || link.target === selectedNode.id));
+        const isSameCluster = link.sourceNode.community_id === link.targetNode.community_id;
+        const strokeColor = isActive ? 'var(--accent-2)' : isSameCluster ? colorForCommunity(link.sourceNode.community_id) : 'var(--edge)';
+        const strokeW = isActive ? 3.2 : 1.2;
+        const strokeO = (selectedNode && !isActive) ? 0.08 : isSameCluster ? 0.45 : 0.85;
+        return `
+          <line
+            x1="${{link.sourceNode.x.toFixed(1)}}"
+            y1="${{link.sourceNode.y.toFixed(1)}}"
+            x2="${{link.targetNode.x.toFixed(1)}}"
+            y2="${{link.targetNode.y.toFixed(1)}}"
+            stroke="${{strokeColor}}"
+            stroke-width="${{strokeW}}"
+            stroke-opacity="${{strokeO}}"
+          />
+        `;
+      }}).join('');
       nodeLayer.innerHTML = getVisibleNodes().map(node => {{
         const radius = 6 + Math.sqrt(node.metric_fan_in_dependency_graph + node.metric_fan_out_dependency_graph + 1) * 2;
         const highlighted = activeNodeId === node.id;
