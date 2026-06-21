@@ -1,7 +1,8 @@
 use crate::error::Result;
 use crate::fs;
 use crate::model::{
-    DependencyKind, EntityEdge, EntityMetric, GraphReport, MetricsReport, TOOL_NAME, TOOL_VERSION,
+    DependencyKind, EntityEdge, EntityMetric, GraphReport, MetricsReport, PolicyFinding,
+    TOOL_NAME, TOOL_VERSION,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,6 +19,9 @@ struct BrowserExport {
     metadata: BrowserMetadata,
     analysis_config: AnalysisConfig,
     graphs: GraphsExport,
+    policy_summary: PolicySummaryExport,
+    top_policy_findings: Vec<BrowserPolicyFinding>,
+    top_functions: Vec<BrowserFunctionMetric>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,6 +100,7 @@ struct BrowserLink {
     target: String,
     kind: String,
     line: usize,
+    cross_group: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -136,8 +141,41 @@ struct ClusterAccumulator {
     total_function_count: usize,
 }
 
-pub fn render_emerge_json(graph: &GraphReport, metrics: &MetricsReport) -> Result<String> {
-    let export = build_export(graph, metrics);
+#[derive(Debug, Clone, Serialize)]
+struct PolicySummaryExport {
+    critical_count: usize,
+    warning_count: usize,
+    total_count: usize,
+    cycle_count: usize,
+    cross_group_dep_count: usize,
+    parser_warning_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BrowserPolicyFinding {
+    severity: String,
+    rule_id: String,
+    message: String,
+    file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BrowserFunctionMetric {
+    file: String,
+    function_name: String,
+    hotspot_score: usize,
+    cyclomatic_estimate: usize,
+    line_count: usize,
+    start_line: usize,
+}
+
+pub fn render_emerge_json(
+    graph: &GraphReport,
+    metrics: &MetricsReport,
+    policy_findings: &[PolicyFinding],
+    cross_group_dep_count: usize,
+) -> Result<String> {
+    let export = build_export(graph, metrics, policy_findings, cross_group_dep_count);
     Ok(serde_json::to_string_pretty(&export)?)
 }
 
@@ -146,8 +184,10 @@ pub fn emit_emerge_html(
     output: Option<&Path>,
     graph: &GraphReport,
     metrics: &MetricsReport,
+    policy_findings: &[PolicyFinding],
+    cross_group_dep_count: usize,
 ) -> Result<()> {
-    let export = build_export(graph, metrics);
+    let export = build_export(graph, metrics, policy_findings, cross_group_dep_count);
     let json = serde_json::to_string_pretty(&export)?;
     let (html_path, json_path) = resolve_html_output_paths(root, output);
     let html = render_html(&json, &export.metadata.project_name);
@@ -157,7 +197,12 @@ pub fn emit_emerge_html(
     Ok(())
 }
 
-fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
+fn build_export(
+    graph: &GraphReport,
+    metrics: &MetricsReport,
+    policy_findings: &[PolicyFinding],
+    cross_group_dep_count: usize,
+) -> BrowserExport {
     let project_name = derive_project_name(&graph.root);
     let parser_warning_count_by_file = build_parser_warning_counts(&graph.parser_warnings);
     let cycle_membership = build_cycle_membership_map(&graph.cycles);
@@ -175,6 +220,12 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
         .file_graph_metrics
         .as_ref()
         .expect("file graph metrics should exist");
+
+    let group_by_file = graph
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.group.as_deref().unwrap_or("ungrouped")))
+        .collect::<BTreeMap<_, _>>();
 
     let nodes = graph
         .files
@@ -221,12 +272,19 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
     let links = graph
         .edges
         .iter()
-        .filter(|edge| node_id_set.contains(edge.from.as_str()) && node_id_set.contains(edge.to.as_str()))
-        .map(|edge| BrowserLink {
-            source: edge.from.clone(),
-            target: edge.to.clone(),
-            kind: dependency_kind_label(&edge.kind).to_string(),
-            line: edge.line,
+        .filter(|edge| {
+            node_id_set.contains(edge.from.as_str()) && node_id_set.contains(edge.to.as_str())
+        })
+        .map(|edge| {
+            let from_group = group_by_file.get(edge.from.as_str()).copied().unwrap_or("ungrouped");
+            let to_group = group_by_file.get(edge.to.as_str()).copied().unwrap_or("ungrouped");
+            BrowserLink {
+                source: edge.from.clone(),
+                target: edge.to.clone(),
+                kind: dependency_kind_label(&edge.kind).to_string(),
+                line: edge.line,
+                cross_group: from_group != to_group,
+            }
         })
         .collect::<Vec<_>>();
     let file_link_count = links.len();
@@ -266,6 +324,46 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
         &entity_scan.communities,
         entity_scan.complete_graph_metrics.total_sloc,
     );
+
+    let critical_count = policy_findings
+        .iter()
+        .filter(|f| f.severity == "critical")
+        .count();
+    let warning_count = policy_findings
+        .iter()
+        .filter(|f| f.severity == "warning")
+        .count();
+    let policy_summary = PolicySummaryExport {
+        critical_count,
+        warning_count,
+        total_count: policy_findings.len(),
+        cycle_count: graph.cycles.len(),
+        cross_group_dep_count,
+        parser_warning_count: graph.parser_warnings.len(),
+    };
+    let top_policy_findings = policy_findings
+        .iter()
+        .take(40)
+        .map(|f| BrowserPolicyFinding {
+            severity: f.severity.clone(),
+            rule_id: f.rule_id.clone(),
+            message: f.message.clone(),
+            file: f.file.clone(),
+        })
+        .collect();
+    let top_functions = metrics
+        .functions
+        .iter()
+        .take(12)
+        .map(|f| BrowserFunctionMetric {
+            file: f.file.clone(),
+            function_name: f.function_name.clone(),
+            hotspot_score: f.hotspot_score,
+            cyclomatic_estimate: f.cyclomatic_estimate,
+            line_count: f.line_count,
+            start_line: f.start_line,
+        })
+        .collect();
 
     BrowserExport {
         metadata: BrowserMetadata {
@@ -325,7 +423,8 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
                             total_sloc.to_string(),
                         ),
                         (
-                            "metric_file_result_dependency_graph_total_parser_warnings".to_string(),
+                            "metric_file_result_dependency_graph_total_parser_warnings"
+                                .to_string(),
                             graph.parser_warnings.len().to_string(),
                         ),
                     ]),
@@ -336,6 +435,9 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
             entity_result_inheritance_graph: entity_inheritance_export,
             entity_result_complete_graph: entity_complete_export,
         },
+        policy_summary,
+        top_policy_findings,
+        top_functions,
     }
 }
 
@@ -387,12 +489,16 @@ fn build_entity_graph_export(
     let entity_id_set: BTreeSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
     let links = edges
         .iter()
-        .filter(|edge| entity_id_set.contains(edge.from.as_str()) && entity_id_set.contains(edge.to.as_str()))
+        .filter(|edge| {
+            entity_id_set.contains(edge.from.as_str())
+                && entity_id_set.contains(edge.to.as_str())
+        })
         .map(|edge| BrowserLink {
             source: edge.from.clone(),
             target: edge.to.clone(),
             kind: dependency_kind_label(&edge.kind).to_string(),
             line: edge.line,
+            cross_group: false,
         })
         .collect::<Vec<_>>();
     let entity_link_count = links.len();
@@ -660,140 +766,237 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{project_name} Graph Explorer</title>
+  <title>{project_name} — gdhealth</title>
   <style>
     :root {{
-      color-scheme: light;
-      --bg: #f4efe7;
-      --panel: rgba(255, 250, 243, 0.94);
-      --ink: #1f1b18;
-      --muted: #6d6258;
-      --accent: #0d6b6f;
-      --accent-2: #d1643f;
-      --grid: rgba(31, 27, 24, 0.08);
-      --edge: rgba(31, 27, 24, 0.18);
-      --border: rgba(31, 27, 24, 0.12);
-      --shadow: 0 18px 40px rgba(34, 24, 18, 0.12);
+      --bg: #0F0F11;
+      --panel: #16161A;
+      --panel-2: #1E1E23;
+      --panel-3: #26262D;
+      --border: rgba(255,255,255,0.07);
+      --border-2: rgba(255,255,255,0.13);
+      --text: #EDEDF0;
+      --text-2: #9090A0;
+      --text-3: #56566A;
+      --accent: #5E6AD2;
+      --accent-bg: rgba(94,106,210,0.13);
+      --red: #E05252;
+      --red-bg: rgba(224,82,82,0.11);
+      --yellow: #D9813A;
+      --yellow-bg: rgba(217,129,58,0.11);
+      --green: #3FC880;
+      --green-bg: rgba(63,200,128,0.11);
+      --orange: #EA783C;
+      --orange-bg: rgba(234,120,60,0.11);
+      --grid: rgba(255,255,255,0.032);
+      --edge-default: rgba(255,255,255,0.15);
+      --edge-cross: rgba(217,129,58,0.55);
     }}
-    * {{ box-sizing: border-box; }}
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    html, body {{ height: 100%; overflow: hidden; }}
     body {{
-      margin: 0;
-      min-height: 100vh;
-      font-family: Georgia, "Times New Roman", serif;
-      background:
-        radial-gradient(circle at top left, rgba(209, 100, 63, 0.18), transparent 32%),
-        radial-gradient(circle at right, rgba(13, 107, 111, 0.16), transparent 24%),
-        linear-gradient(180deg, #f8f4ed 0%, var(--bg) 100%);
-      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.4;
+      background: var(--bg);
+      color: var(--text);
     }}
     .app {{
       display: grid;
-      grid-template-columns: 320px minmax(0, 1fr) 320px;
-      min-height: 100vh;
-      gap: 16px;
-      padding: 16px;
+      grid-template-columns: 256px 1fr 284px;
+      height: 100vh;
+      gap: 1px;
+      background: var(--border);
     }}
     .panel {{
       background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(12px);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
       overflow: hidden;
     }}
-    .panel-inner {{
-      padding: 18px 18px 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      height: 100%;
+    .panel-header {{
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      flex: none;
     }}
-    h1, h2, h3, p {{ margin: 0; }}
-    h1 {{ font-size: 1.55rem; line-height: 1.1; }}
-    h2 {{ font-size: 0.92rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }}
-    .hero {{
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }}
-    .hero p {{ color: var(--muted); line-height: 1.4; }}
-    .search {{
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 12px 14px;
-      font: inherit;
-      background: rgba(255, 255, 255, 0.8);
-      color: var(--ink);
-    }}
-    .graph-select {{
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 12px 14px;
-      font: inherit;
-      background: rgba(255, 255, 255, 0.8);
-      color: var(--ink);
-    }}
-    .stats {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-    }}
-    .stat {{
-      padding: 12px;
-      border-radius: 16px;
-      background: rgba(13, 107, 111, 0.08);
-      border: 1px solid rgba(13, 107, 111, 0.12);
-    }}
-    .stat strong {{
+    .tool-label {{
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
       display: block;
-      font-size: 1.3rem;
+      margin-bottom: 3px;
     }}
-    [title] {{ cursor: help; }}
-    .clusters, .files {{
+    .project-name {{
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .panel-body {{
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 14px;
       min-height: 0;
     }}
-    .scroll {{
-      overflow: auto;
-      max-height: 34vh;
-      padding-right: 4px;
+    .section {{ display: flex; flex-direction: column; gap: 7px; }}
+    .section-label {{
+      font-size: 10.5px;
+      font-weight: 500;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding-bottom: 7px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }}
-    .cluster-item, .file-item {{
+    .section-aside {{
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--text-3);
+      text-transform: none;
+      letter-spacing: 0;
+    }}
+    select.select {{
+      width: 100%;
+      background: var(--panel-2);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 10px 12px;
-      background: rgba(255, 255, 255, 0.62);
+      border-radius: 5px;
+      padding: 7px 10px;
+      font: inherit;
+      font-size: 12px;
+      color: var(--text);
       cursor: pointer;
+      outline: none;
+      appearance: auto;
     }}
-    .cluster-item.active, .file-item.active {{
-      border-color: var(--accent);
-      box-shadow: inset 0 0 0 1px var(--accent);
+    select.select:focus {{ border-color: var(--accent); }}
+    input.search {{
+      width: 100%;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 7px 10px;
+      font: inherit;
+      font-size: 12px;
+      color: var(--text);
+      outline: none;
     }}
-    .cluster-title {{
+    input.search::placeholder {{ color: var(--text-3); }}
+    input.search:focus {{ border-color: var(--accent); }}
+    .stats-grid {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
+    }}
+    .stat-card {{
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 9px 10px;
+      cursor: default;
+    }}
+    .stat-label {{
+      font-size: 10px;
+      color: var(--text-3);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }}
+    .stat-value {{
+      font-size: 20px;
+      font-weight: 600;
+      line-height: 1.1;
+      margin-top: 2px;
+      font-variant-numeric: tabular-nums;
+    }}
+    .badge-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+    }}
+    .badge-dot {{
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      flex: none;
+    }}
+    .badge-red {{ background: var(--red-bg); color: var(--red); }}
+    .badge-red .badge-dot {{ background: var(--red); }}
+    .badge-yellow {{ background: var(--yellow-bg); color: var(--yellow); }}
+    .badge-yellow .badge-dot {{ background: var(--yellow); }}
+    .badge-orange {{ background: var(--orange-bg); color: var(--orange); }}
+    .badge-orange .badge-dot {{ background: var(--orange); }}
+    .badge-blue {{ background: var(--accent-bg); color: var(--accent); }}
+    .badge-blue .badge-dot {{ background: var(--accent); }}
+    .seg-control {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 2px;
+      gap: 2px;
+    }}
+    .seg {{
+      padding: 5px;
+      background: transparent;
+      border: none;
+      border-radius: 3px;
+      font: inherit;
+      font-size: 12px;
+      color: var(--text-2);
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+      text-align: center;
+    }}
+    .seg:hover {{ background: var(--panel-3); color: var(--text); }}
+    .seg.active {{ background: var(--panel-3); color: var(--text); }}
+    .cluster-list, .scroll-list {{ display: flex; flex-direction: column; gap: 1px; }}
+    .cluster-item {{
       display: flex;
       align-items: center;
       gap: 8px;
-      font-weight: 700;
+      padding: 6px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--text-2);
+      transition: background 0.1s, color 0.1s;
+      border: 1px solid transparent;
     }}
-    .swatch {{
-      width: 12px;
-      height: 12px;
-      border-radius: 999px;
+    .cluster-item:hover {{ background: var(--panel-2); color: var(--text); }}
+    .cluster-item.active {{ background: var(--accent-bg); color: var(--text); border-color: rgba(94,106,210,0.2); }}
+    .cluster-dot {{
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
       flex: none;
     }}
-    .meta {{
-      color: var(--muted);
-      font-size: 0.92rem;
-      line-height: 1.4;
-    }}
+    .cluster-name {{ flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }}
+    .cluster-meta {{ font-size: 10.5px; color: var(--text-3); flex: none; }}
     .canvas-panel {{
+      background: var(--bg);
       position: relative;
-      min-height: 72vh;
-      overflow: hidden;
     }}
     .canvas-panel::before {{
       content: "";
@@ -802,9 +1005,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       background-image:
         linear-gradient(var(--grid) 1px, transparent 1px),
         linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-      background-size: 28px 28px;
-      mask-image: linear-gradient(180deg, rgba(0,0,0,0.75), transparent);
+      background-size: 24px 24px;
       pointer-events: none;
+      z-index: 0;
     }}
     svg {{
       width: 100%;
@@ -813,88 +1016,243 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       position: relative;
       z-index: 1;
     }}
-    .legend {{
+    .canvas-overlay {{
       position: absolute;
-      left: 18px;
-      bottom: 18px;
-      z-index: 2;
-      background: rgba(255, 250, 243, 0.88);
+      z-index: 10;
+      background: rgba(22,22,26,0.9);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 10px 12px;
-      color: var(--muted);
-      font-size: 0.9rem;
+      border-radius: 5px;
+      padding: 6px 10px;
+      font-size: 11px;
+      color: var(--text-3);
+      backdrop-filter: blur(4px);
     }}
-    .detail-grid {{
+    .canvas-overlay.bottom-left {{ bottom: 12px; left: 12px; }}
+    .canvas-overlay.bottom-right {{ bottom: 12px; right: 12px; }}
+    .canvas-overlay.hidden {{ display: none; }}
+    .heatbar {{
+      width: 110px;
+      height: 5px;
+      border-radius: 3px;
+      background: linear-gradient(to right, #3FC880, #D9813A, #E05252);
+      margin-bottom: 4px;
+    }}
+    .heatbar-labels {{
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-3);
+    }}
+    .empty-state {{
+      font-size: 12px;
+      color: var(--text-3);
+      padding: 6px 0;
+    }}
+    .metric-grid {{
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
     }}
-    .detail-card {{
-      padding: 10px 12px;
-      border-radius: 14px;
-      background: rgba(209, 100, 63, 0.08);
-      border: 1px solid rgba(209, 100, 63, 0.12);
+    .metric-card {{
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 8px 10px;
     }}
-    .detail-card strong {{
-      display: block;
-      font-size: 1.1rem;
+    .metric-label {{
+      font-size: 10px;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 500;
     }}
-    .empty {{
-      color: var(--muted);
-      line-height: 1.4;
+    .metric-value {{
+      font-size: 17px;
+      font-weight: 600;
+      margin-top: 2px;
+      font-variant-numeric: tabular-nums;
     }}
-    @media (max-width: 1180px) {{
-      .app {{
-        grid-template-columns: 1fr;
-      }}
-      .canvas-panel {{
-        min-height: 58vh;
-      }}
-      .scroll {{
-        max-height: none;
-      }}
+    .node-name {{
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-bottom: 2px;
+    }}
+    .node-path {{
+      font-size: 11px;
+      color: var(--text-3);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-bottom: 8px;
+    }}
+    .node-tags {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }}
+    .tag {{
+      font-size: 10.5px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-weight: 500;
+    }}
+    .tag-red {{ background: var(--red-bg); color: var(--red); }}
+    .tag-blue {{ background: var(--accent-bg); color: var(--accent); }}
+    .tag-yellow {{ background: var(--yellow-bg); color: var(--yellow); }}
+    .finding-list {{ display: flex; flex-direction: column; gap: 1px; }}
+    .finding-item {{
+      display: flex;
+      gap: 8px;
+      padding: 5px 6px;
+      border-radius: 4px;
+      cursor: default;
+      transition: background 0.1s;
+    }}
+    .finding-item:hover {{ background: var(--panel-2); }}
+    .finding-dot {{
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-top: 4px;
+      flex: none;
+    }}
+    .finding-dot.critical {{ background: var(--red); }}
+    .finding-dot.warning {{ background: var(--yellow); }}
+    .finding-body {{ flex: 1; min-width: 0; }}
+    .finding-msg {{
+      font-size: 11.5px;
+      color: var(--text-2);
+      line-height: 1.5;
+    }}
+    .finding-file {{
+      font-size: 10.5px;
+      color: var(--text-3);
+      margin-top: 1px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .fn-list {{ display: flex; flex-direction: column; gap: 1px; }}
+    .fn-item {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 6px;
+      border-radius: 4px;
+      cursor: default;
+      transition: background 0.1s;
+    }}
+    .fn-item:hover {{ background: var(--panel-2); }}
+    .fn-body {{ flex: 1; min-width: 0; }}
+    .fn-name {{
+      font-size: 12px;
+      color: var(--text);
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .fn-file {{
+      font-size: 10.5px;
+      color: var(--text-3);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .fn-score {{
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      flex: none;
+      font-variant-numeric: tabular-nums;
+    }}
+    .fn-score-high {{ background: var(--red-bg); color: var(--red); }}
+    .fn-score-mid {{ background: var(--yellow-bg); color: var(--yellow); }}
+    .fn-score-low {{ background: var(--green-bg); color: var(--green); }}
+    .divider {{
+      height: 1px;
+      background: var(--border);
+      flex: none;
+    }}
+    ::-webkit-scrollbar {{ width: 3px; }}
+    ::-webkit-scrollbar-thumb {{ background: var(--border-2); border-radius: 2px; }}
+    ::-webkit-scrollbar-track {{ background: transparent; }}
+    @media (max-width: 900px) {{
+      .app {{ grid-template-columns: 1fr; height: auto; overflow: auto; }}
+      html, body {{ height: auto; overflow: auto; }}
+      .canvas-panel {{ height: 60vh; }}
     }}
   </style>
 </head>
 <body>
   <div class="app">
     <aside class="panel">
-      <div class="panel-inner">
-        <div class="hero">
-          <h2>gdhealth browser export</h2>
-          <h1>{project_name}</h1>
-          <p>Force-directed dependency view with deterministic cluster metrics.</p>
+      <div class="panel-header">
+        <span class="tool-label">gdhealth</span>
+        <div class="project-name" title="{project_name}">{project_name}</div>
+      </div>
+      <div class="panel-body">
+        <div class="section">
+          <select id="graph-type" class="select"></select>
+          <input id="search" class="search" type="search" placeholder="Search files or groups…">
         </div>
-        <select id="graph-type" class="graph-select"></select>
-        <input id="search" class="search" type="search" placeholder="Search files or groups">
-        <section>
-          <h2>Graph Stats</h2>
-          <div id="stats" class="stats"></div>
-        </section>
-        <section class="clusters">
-          <h2>Clusters</h2>
-          <div id="clusters" class="scroll"></div>
-        </section>
+        <div class="section">
+          <div class="section-label">Overview</div>
+          <div id="stats" class="stats-grid"></div>
+          <div id="health-badges" class="badge-row"></div>
+        </div>
+        <div class="section">
+          <div class="section-label">Color</div>
+          <div class="seg-control">
+            <button class="seg active" id="mode-community">Community</button>
+            <button class="seg" id="mode-hotspot">Hotspot</button>
+          </div>
+        </div>
+        <div class="section" style="flex:1;min-height:0;">
+          <div class="section-label">Clusters</div>
+          <div id="clusters" class="cluster-list" style="overflow-y:auto;flex:1;min-height:0;"></div>
+        </div>
       </div>
     </aside>
+
     <main class="panel canvas-panel">
       <svg id="graph" viewBox="0 0 960 720" preserveAspectRatio="xMidYMid meet"></svg>
-      <div class="legend">Drag nodes to inspect neighborhoods. Click a cluster card to isolate it.</div>
+      <div class="canvas-overlay bottom-left">Drag · Click to select · Esc to clear</div>
+      <div class="canvas-overlay bottom-right hidden" id="hotspot-legend">
+        <div class="heatbar"></div>
+        <div class="heatbar-labels"><span>Low</span><span>High</span></div>
+      </div>
     </main>
+
     <aside class="panel">
-      <div class="panel-inner">
-        <section>
-          <h2>Selection</h2>
-          <div id="selection" class="empty">Hover or click a node to inspect file metrics.</div>
-        </section>
-        <section class="files">
-          <h2>Visible Nodes</h2>
-          <div id="files" class="scroll"></div>
-        </section>
+      <div class="panel-body">
+        <div class="section" id="selection-section">
+          <div class="section-label">Selection</div>
+          <div id="selection" class="empty-state">Click a node or cluster to inspect.</div>
+        </div>
+        <div class="divider"></div>
+        <div class="section" style="flex:1;min-height:0;min-height:140px;">
+          <div class="section-label">
+            Policy findings
+            <span class="section-aside" id="policy-count-aside"></span>
+          </div>
+          <div id="policy-findings" class="finding-list" style="overflow-y:auto;flex:1;"></div>
+        </div>
+        <div class="divider"></div>
+        <div class="section">
+          <div class="section-label">Hot functions</div>
+          <div id="hot-functions" class="fn-list"></div>
+        </div>
       </div>
     </aside>
   </div>
+
   <script id="graph-data" type="application/json">{data_json}</script>
   <script>
     const payload = JSON.parse(document.getElementById('graph-data').textContent);
@@ -904,412 +1262,436 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       entity_result_inheritance_graph: 'Entity inheritance',
       entity_result_complete_graph: 'Entity complete'
     }};
-    const selectionEl = document.getElementById('selection');
-    const clustersEl = document.getElementById('clusters');
-    const filesEl = document.getElementById('files');
-    const searchEl = document.getElementById('search');
-    const graphTypeEl = document.getElementById('graph-type');
-    const svg = document.getElementById('graph');
-    const statsEl = document.getElementById('stats');
-    const width = 960;
-    const height = 720;
+
+    const W = 960, H = 720;
     let graphType = payload.analysis_config.default_graph_type;
     let graphPayload = null;
-    let nodes = [];
-    let nodeMap = new Map();
-    let links = [];
-    let clusters = [];
-    let stats = null;
-    let activeCluster = null;
+    let nodes = [], nodeMap = new Map(), links = [], clusters = [], stats = null;
+    let activeCluster = null, activeNodeId = null, draggingNode = null;
+    let colorMode = 'community';
+    let maxHotspot = 1;
     let searchTerm = '';
-    let activeNodeId = null;
 
-    function colorForCommunity(communityId) {{
-      const hue = (communityId * 57) % 360;
-      return `hsl(${{hue}} 62% 46%)`;
-    }}
-
-    function formatNumber(value) {{
-      return Number.isInteger(value) ? String(value) : value.toFixed(2);
-    }}
-
-    function renderStats() {{
-      const cards = [
-        ['Nodes', stats.node_count, '.gd files analyzed in this graph.'],
-        ['Edges', stats.edge_count, 'Dependency connections (preload / load / extends) between files. Higher = more coupled.'],
-        ['Clusters', stats.community_count, 'File groups detected by Louvain community detection. Ideal: a handful of cohesive clusters. Many tiny clusters = low cohesion.'],
-        ['SLOC', stats.total_sloc, 'Source Lines of Code across all files (includes blanks and comments).'],
-      ];
-      statsEl.innerHTML = cards.map(([label, value, tip]) => `
-        <div class="stat" title="${{tip}}">
-          <span class="meta">${{label}}</span>
-          <strong>${{value}}</strong>
-        </div>
-      `).join('');
-    }}
-
-    function renderClusters() {{
-      clustersEl.innerHTML = clusters.map(cluster => `
-        <button class="cluster-item${{activeCluster === cluster.community_id ? ' active' : ''}}" data-community="${{cluster.community_id}}">
-          <div class="cluster-title">
-            <span class="swatch" style="background:${{colorForCommunity(cluster.community_id)}}"></span>
-            ${{cluster.label || `Cluster ${{cluster.community_id}}`}}
-          </div>
-          <div class="meta">
-            <span title="Number of .gd files grouped in this cluster by community detection.">${{cluster.node_count}} files</span>,
-            <span title="Source Lines of Code total. Ideal: balanced across clusters. Clusters over 500 SLOC are good refactor candidates.">${{cluster.total_sloc}} SLOC</span>,
-            <span title="Average fan-in: how many OTHER files import files from this cluster. High = stable API used by many, but risky to change. Ideal avg 1-4. Over 8 = consider extracting a stable interface.">fan-in ${{formatNumber(cluster.avg_fan_in)}}</span> /
-            <span title="Average fan-out: how many files each file in this cluster imports on average. High = too many responsibilities. Ideal avg 0-3. Over 6 = consider splitting.">fan-out ${{formatNumber(cluster.avg_fan_out)}}</span>
-          </div>
-        </button>
-      `).join('');
-
-      clustersEl.querySelectorAll('[data-community]').forEach(button => {{
-        button.addEventListener('click', () => {{
-          const communityId = Number(button.getAttribute('data-community'));
-          activeCluster = activeCluster === communityId ? null : communityId;
-          renderClusters();
-          renderFiles();
-          updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null);
-          draw();
-        }});
-      }});
-    }}
-
-    function renderFiles() {{
-      const visible = getVisibleNodes();
-      filesEl.innerHTML = visible.map(node => `
-        <button class="file-item${{activeNodeId === node.id ? ' active' : ''}}" data-node-id="${{node.id}}">
-          <div><strong>${{node.display_name}}</strong></div>
-          <div class="meta">${{node.absolute_name}}</div>
-        </button>
-      `).join('');
-      filesEl.querySelectorAll('[data-node-id]').forEach(button => {{
-        button.addEventListener('click', () => {{
-          const node = nodeMap.get(button.getAttribute('data-node-id'));
-          activeNodeId = node.id;
-          updateSelection(node);
-          renderFiles();
-          draw();
-        }});
-      }});
-    }}
-
-    function updateSelection(node) {{
-      if (!node) {{
-        if (activeCluster == null) {{
-          selectionEl.className = 'empty';
-          selectionEl.textContent = 'Hover or click a node to inspect file metrics.';
-          return;
-        }}
-        const cluster = clusters.find(item => item.community_id === activeCluster);
-        selectionEl.className = '';
-        selectionEl.innerHTML = `
-          <h3>${{cluster.label || `Cluster ${{cluster.community_id}}`}}</h3>
-          <p class="meta">${{cluster.node_count}} files, ${{cluster.total_sloc}} SLOC, ${{cluster.percent_total_sloc.toFixed(1)}}% of project SLOC</p>
-          <div class="detail-grid">
-            <div class="detail-card" title="Average fan-in: how many files import from this cluster per file. High = widely used, but costly to change. Ideal 1-4. Over 8 = extract a stable interface."><span class="meta">Avg fan-in</span><strong>${{formatNumber(cluster.avg_fan_in)}}</strong></div>
-            <div class="detail-card" title="Average fan-out: how many files each file here imports. High = many responsibilities. Ideal 0-3. Over 6 = split the cluster."><span class="meta">Avg fan-out</span><strong>${{formatNumber(cluster.avg_fan_out)}}</strong></div>
-            <div class="detail-card" title="Average number of functions per file. Ideal 5-15. Over 25 per file = consider splitting."><span class="meta">Avg functions</span><strong>${{formatNumber(cluster.avg_function_count)}}</strong></div>
-            <div class="detail-card" title="Total .gd files in this cluster."><span class="meta">Files</span><strong>${{cluster.node_count}}</strong></div>
-          </div>
-          <p class="meta">${{cluster.files.slice(0, 8).join('<br>')}}</p>
-        `;
-        return;
-      }}
-
-      selectionEl.className = '';
-      selectionEl.innerHTML = `
-        <h3>${{node.display_name}}</h3>
-        <p class="meta">${{node.absolute_name}}</p>
-        <div class="detail-grid">
-          <div class="detail-card" title="Total lines in this file (including blank lines and comments)."><span class="meta">Lines</span><strong>${{node.line_count}}</strong></div>
-          <div class="detail-card" title="Fan-in: how many other files import or preload this one. High = many dependents, risky to modify. Ideal 0-3. Over 8 = consider extracting a stable interface or autoload."><span class="meta">Fan-in</span><strong>${{node.metric_fan_in_dependency_graph}}</strong></div>
-          <div class="detail-card" title="Fan-out: how many files this script imports or preloads. High = too many responsibilities. Ideal 0-4. Over 8 = split this file."><span class="meta">Fan-out</span><strong>${{node.metric_fan_out_dependency_graph}}</strong></div>
-          <div class="detail-card" title="Louvain cluster ID. Files with the same ID are tightly related by dependency patterns and were grouped together automatically."><span class="meta">Community</span><strong>${{node.community_id}}</strong></div>
-          <div class="detail-card" title="Number of functions and methods in this file. Ideal 5-15. Over 25 = consider splitting into smaller scripts or using composition."><span class="meta">Functions</span><strong>${{node.function_count}}</strong></div>
-          <div class="detail-card" title="Hotspot score: weighted signal combining dependencies, size, and cycle membership. Higher = more likely to cause bugs when changed. Ideal under 10. Over 20 = refactor priority."><span class="meta">Hotspot</span><strong>${{node.metric_file_hotspot_score}}</strong></div>
-        </div>
-        <p class="meta">Group: ${{node.group}} | Parser warnings: ${{node.parser_warning_count}} | Cycle member: ${{node.has_cycle ? 'yes' : 'no'}}</p>
-      `;
-    }}
-
-    function getVisibleNodes() {{
-      return nodes.filter(node => {{
-        const matchesCluster = activeCluster == null || node.community_id === activeCluster;
-        const haystack = `${{node.display_name}} ${{node.absolute_name}} ${{node.group}}`.toLowerCase();
-        const matchesSearch = !searchTerm || haystack.includes(searchTerm);
-        return matchesCluster && matchesSearch;
-      }});
-    }}
-
-    function getSelectedNode() {{
-      return activeNodeId ? nodeMap.get(activeNodeId) : null;
-    }}
-
-    function buildNeighborSet(selectedNode) {{
-      if (!selectedNode) {{
-        return new Set();
-      }}
-      const neighbors = new Set([selectedNode.id]);
-      for (const link of links) {{
-        if (link.source === selectedNode.id) neighbors.add(link.target);
-        if (link.target === selectedNode.id) neighbors.add(link.source);
-      }}
-      return neighbors;
-    }}
-
-    function hashValue(text) {{
-      return Array.from(text).reduce((acc, ch) => ((acc * 31) + ch.charCodeAt(0)) >>> 0, 7);
-    }}
-
-    function sortClusterMembers(members) {{
-      return [...members].sort((left, right) => {{
-        if (right.metric_fan_in_dependency_graph !== left.metric_fan_in_dependency_graph) {{
-          return right.metric_fan_in_dependency_graph - left.metric_fan_in_dependency_graph;
-        }}
-        if (right.metric_fan_out_dependency_graph !== left.metric_fan_out_dependency_graph) {{
-          return right.metric_fan_out_dependency_graph - left.metric_fan_out_dependency_graph;
-        }}
-        return left.absolute_name.localeCompare(right.absolute_name);
-      }});
-    }}
-
-    function assignInitialLayout() {{
-      const clusterMap = new Map();
-      for (const node of nodes) {{
-        const members = clusterMap.get(node.community_id) || [];
-        members.push(node);
-        clusterMap.set(node.community_id, members);
-      }}
-
-      const communities = [...clusterMap.keys()].sort((a, b) => a - b);
-      const ringCount = Math.max(1, Math.ceil(Math.sqrt(communities.length)));
-      const centerX = width / 2;
-      const centerY = height / 2;
-      const ringRadiusX = 290;
-      const ringRadiusY = 220;
-
-      communities.forEach((communityId, communityIndex) => {{
-        const members = sortClusterMembers(clusterMap.get(communityId) || []);
-        const row = Math.floor(communityIndex / ringCount);
-        const col = communityIndex % ringCount;
-        const rowOffset = (row - (Math.ceil(communities.length / ringCount) - 1) / 2) * 180;
-        const colOffset = (col - (ringCount - 1) / 2) * 220;
-        const angle = (communityIndex / Math.max(1, communities.length)) * Math.PI * 2;
-        const anchorX = centerX + colOffset + Math.cos(angle) * Math.min(90, ringRadiusX / Math.max(1, communities.length / 8));
-        const anchorY = centerY + rowOffset + Math.sin(angle) * Math.min(70, ringRadiusY / Math.max(1, communities.length / 8));
-
-        members.forEach((node, memberIndex) => {{
-          const golden = memberIndex * 2.399963229728653;
-          const localRadius = 18 + Math.sqrt(memberIndex + 1) * 22 + (hashValue(node.id) % 7);
-          node.x = Math.min(width - 30, Math.max(30, anchorX + Math.cos(golden) * localRadius));
-          node.y = Math.min(height - 30, Math.max(30, anchorY + Math.sin(golden) * localRadius));
-          node.vx = 0;
-          node.vy = 0;
-        }});
-      }});
-    }}
-
-    function stabilizeLayout(iterations) {{
-      const idealDistance = 84;
-      const centerX = width / 2;
-      const centerY = height / 2;
-
-      for (let iteration = 0; iteration < iterations; iteration += 1) {{
-        const alpha = 1 - (iteration / iterations);
-        const clusterAnchors = new Map();
-        for (const node of nodes) {{
-          const anchor = clusterAnchors.get(node.community_id) || {{ x: 0, y: 0, count: 0 }};
-          anchor.x += node.x;
-          anchor.y += node.y;
-          anchor.count += 1;
-          clusterAnchors.set(node.community_id, anchor);
-        }}
-        for (const anchor of clusterAnchors.values()) {{
-          anchor.x /= anchor.count;
-          anchor.y /= anchor.count;
-        }}
-
-        for (const node of nodes) {{
-          let fx = 0;
-          let fy = 0;
-
-          for (const other of nodes) {{
-            if (node === other) continue;
-            const dx = node.x - other.x;
-            const dy = node.y - other.y;
-            const distanceSq = Math.max(49, dx * dx + dy * dy);
-            const distance = Math.sqrt(distanceSq);
-            const repulsion = (340 * (0.35 + alpha * 0.9)) / distanceSq;
-            fx += (dx / distance) * repulsion;
-            fy += (dy / distance) * repulsion;
-          }}
-
-          const anchor = clusterAnchors.get(node.community_id);
-          fx += (anchor.x - node.x) * (0.015 + alpha * 0.02);
-          fy += (anchor.y - node.y) * (0.015 + alpha * 0.02);
-          fx += (centerX - node.x) * 0.0012;
-          fy += (centerY - node.y) * 0.0012;
-
-          node.vx = (node.vx + fx) * 0.78;
-          node.vy = (node.vy + fy) * 0.78;
-        }}
-
-        for (const link of links) {{
-          const dx = link.targetNode.x - link.sourceNode.x;
-          const dy = link.targetNode.y - link.sourceNode.y;
-          const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-          const spring = (distance - idealDistance) * (0.02 + alpha * 0.016);
-          const fx = (dx / distance) * spring;
-          const fy = (dy / distance) * spring;
-          link.sourceNode.vx += fx;
-          link.sourceNode.vy += fy;
-          link.targetNode.vx -= fx;
-          link.targetNode.vy -= fy;
-        }}
-
-        for (const node of nodes) {{
-          node.x = Math.min(width - 24, Math.max(24, node.x + node.vx));
-          node.y = Math.min(height - 24, Math.max(24, node.y + node.vy));
-        }}
-      }}
-
-      for (const node of nodes) {{
-        node.vx = 0;
-        node.vy = 0;
-      }}
-    }}
-
+    const selEl = document.getElementById('selection');
+    const clustersEl = document.getElementById('clusters');
+    const statsEl = document.getElementById('stats');
+    const badgesEl = document.getElementById('health-badges');
+    const graphTypeEl = document.getElementById('graph-type');
+    const searchEl = document.getElementById('search');
+    const policyEl = document.getElementById('policy-findings');
+    const hotFnEl = document.getElementById('hot-functions');
+    const policyAside = document.getElementById('policy-count-aside');
+    const hotspotLegend = document.getElementById('hotspot-legend');
+    const svg = document.getElementById('graph');
     const linkLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const nodeLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     svg.append(linkLayer, nodeLayer);
 
-    let draggingNode = null;
-
-    function activateGraph(nextGraphType) {{
-      graphType = nextGraphType;
-      graphPayload = payload.graphs[graphType];
-      nodes = graphPayload.graph.nodes.map((node, index) => ({{ ...node, index }}));
-      nodeMap = new Map(nodes.map(node => [node.id, node]));
-      links = graphPayload.graph.links.map(link => ({{
-        ...link,
-        sourceNode: nodeMap.get(link.source),
-        targetNode: nodeMap.get(link.target)
-      }})).filter(link => link.sourceNode && link.targetNode);
-      clusters = Object.values(graphPayload.cluster_metrics_map).sort((a, b) => a.community_id - b.community_id);
-      stats = graphPayload.statistics;
-      activeCluster = null;
-      activeNodeId = null;
-      draggingNode = null;
-      selectionEl.className = 'empty';
-      selectionEl.textContent = 'Hover or click a node to inspect node metrics.';
-      assignInitialLayout();
-      stabilizeLayout(160);
-      renderStats();
-      renderClusters();
-      renderFiles();
-      draw();
+    // ── color helpers ──────────────────────────────────────────────
+    function communityColor(id) {{
+      const h = (id * 57 + 180) % 360;
+      return `hsl(${{h}} 50% 62%)`;
     }}
 
-    function draw() {{
-      const visibleIds = new Set(getVisibleNodes().map(node => node.id));
-      const visibleLinks = links.filter(link => visibleIds.has(link.source) && visibleIds.has(link.target));
-      const selectedNode = getSelectedNode();
-      const neighborSet = buildNeighborSet(selectedNode);
-      linkLayer.innerHTML = visibleLinks.map(link => {{
-        const isActive = !!(selectedNode && (link.source === selectedNode.id || link.target === selectedNode.id));
-        const isSameCluster = link.sourceNode.community_id === link.targetNode.community_id;
-        const strokeColor = isActive ? 'var(--accent-2)' : isSameCluster ? colorForCommunity(link.sourceNode.community_id) : 'var(--edge)';
-        const strokeW = isActive ? 3.2 : 1.2;
-        const strokeO = (selectedNode && !isActive) ? 0.08 : isSameCluster ? 0.45 : 0.85;
-        return `
-          <line
-            x1="${{link.sourceNode.x.toFixed(1)}}"
-            y1="${{link.sourceNode.y.toFixed(1)}}"
-            x2="${{link.targetNode.x.toFixed(1)}}"
-            y2="${{link.targetNode.y.toFixed(1)}}"
-            stroke="${{strokeColor}}"
-            stroke-width="${{strokeW}}"
-            stroke-opacity="${{strokeO}}"
-          />
-        `;
-      }}).join('');
-      nodeLayer.innerHTML = getVisibleNodes().map(node => {{
-        const radius = 6 + Math.sqrt(node.metric_fan_in_dependency_graph + node.metric_fan_out_dependency_graph + 1) * 2;
-        const highlighted = activeNodeId === node.id;
-        const related = !selectedNode || neighborSet.has(node.id);
-        const fill = colorForCommunity(node.community_id);
-        const showLabel = highlighted || (selectedNode && related) || (!selectedNode && (node.metric_fan_in_dependency_graph + node.metric_fan_out_dependency_graph >= 3));
-        return `
-          <g data-node-id="${{node.id}}" transform="translate(${{node.x.toFixed(1)}} ${{node.y.toFixed(1)}})">
-            <circle r="${{radius.toFixed(1)}}" fill="${{fill}}" fill-opacity="${{related ? 0.96 : 0.16}}" stroke="${{highlighted ? 'var(--accent-2)' : 'rgba(255,255,255,0.85)'}}" stroke-width="${{highlighted ? 3 : 1.5}}" stroke-opacity="${{related ? 1 : 0.3}}"></circle>
-            <text y="-${{radius + 8}}" text-anchor="middle" font-size="11" fill="var(--ink)" fill-opacity="${{showLabel ? (related ? 1 : 0.26) : 0}}">${{node.display_name}}</text>
-          </g>
-        `;
-      }}).join('');
+    function lerpColor(r1,g1,b1, r2,g2,b2, t) {{
+      return [r1+(r2-r1)*t|0, g1+(g2-g1)*t|0, b1+(b2-b1)*t|0];
+    }}
 
-      nodeLayer.querySelectorAll('[data-node-id]').forEach(group => {{
-        group.addEventListener('mouseenter', () => {{
-          const node = nodeMap.get(group.getAttribute('data-node-id'));
-          updateSelection(node);
-        }});
-        group.addEventListener('mouseleave', () => {{
-          updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null);
-        }});
-        group.addEventListener('mousedown', event => {{
-          const node = nodeMap.get(group.getAttribute('data-node-id'));
-          draggingNode = node;
-          event.preventDefault();
-        }});
-        group.addEventListener('click', () => {{
-          const node = nodeMap.get(group.getAttribute('data-node-id'));
-          activeNodeId = activeNodeId === node.id ? null : node.id;
-          updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null);
-          renderFiles();
+    function hotspotColor(score) {{
+      const t = maxHotspot > 0 ? Math.min(score / maxHotspot, 1) : 0;
+      let r, g, b;
+      if (t < 0.5) {{
+        [r,g,b] = lerpColor(63,200,128, 217,129,58, t*2);
+      }} else {{
+        [r,g,b] = lerpColor(217,129,58, 224,82,82, (t-0.5)*2);
+      }}
+      return `rgb(${{r}},${{g}},${{b}})`;
+    }}
+
+    function nodeColor(node) {{
+      return colorMode === 'hotspot'
+        ? hotspotColor(node.metric_file_hotspot_score)
+        : communityColor(node.community_id);
+    }}
+
+    function fmt(v) {{
+      return typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(2) : String(v);
+    }}
+
+    // ── render: stats ──────────────────────────────────────────────
+    function renderStats() {{
+      const ps = payload.policy_summary;
+      statsEl.innerHTML = [
+        ['Files', stats.node_count, 'Source files analyzed in this graph.'],
+        ['Edges', stats.edge_count, 'Dependency connections between files.'],
+        ['Clusters', stats.community_count, 'Communities detected by Louvain clustering.'],
+        ['SLOC', stats.total_sloc.toLocaleString(), 'Source lines of code across all files.'],
+      ].map(([l,v,tip]) => `<div class="stat-card" title="${{tip}}"><div class="stat-label">${{l}}</div><div class="stat-value">${{v}}</div></div>`).join('');
+
+      badgesEl.innerHTML = [
+        ps.critical_count > 0 ? `<span class="badge badge-red"><span class="badge-dot"></span>Critical ${{ps.critical_count}}</span>` : '',
+        ps.warning_count > 0 ? `<span class="badge badge-yellow"><span class="badge-dot"></span>Warning ${{ps.warning_count}}</span>` : '',
+        ps.cycle_count > 0 ? `<span class="badge badge-orange"><span class="badge-dot"></span>Cycles ${{ps.cycle_count}}</span>` : '',
+        ps.cross_group_dep_count > 0 ? `<span class="badge badge-blue"><span class="badge-dot"></span>Cross-group ${{ps.cross_group_dep_count}}</span>` : '',
+      ].filter(Boolean).join('');
+    }}
+
+    // ── render: clusters ───────────────────────────────────────────
+    function renderClusters() {{
+      clustersEl.innerHTML = clusters.map(c => `
+        <button class="cluster-item${{activeCluster === c.community_id ? ' active' : ''}}" data-cid="${{c.community_id}}">
+          <span class="cluster-dot" style="background:${{communityColor(c.community_id)}}"></span>
+          <span class="cluster-name">${{c.label || 'Cluster ' + c.community_id}}</span>
+          <span class="cluster-meta">${{c.node_count}} files</span>
+        </button>
+      `).join('');
+      clustersEl.querySelectorAll('[data-cid]').forEach(btn => {{
+        btn.addEventListener('click', () => {{
+          const cid = Number(btn.dataset.cid);
+          activeCluster = activeCluster === cid ? null : cid;
+          activeNodeId = null;
+          renderClusters();
+          updateSelection(null);
           draw();
         }});
       }});
     }}
 
-    svg.addEventListener('mousemove', event => {{
+    // ── render: selection ──────────────────────────────────────────
+    function updateSelection(node) {{
+      if (!node && activeCluster == null) {{
+        selEl.className = 'empty-state';
+        selEl.textContent = 'Click a node or cluster to inspect.';
+        return;
+      }}
+      if (!node && activeCluster != null) {{
+        const c = clusters.find(x => x.community_id === activeCluster);
+        if (!c) return;
+        selEl.className = '';
+        selEl.innerHTML = `
+          <div class="node-name">${{c.label || 'Cluster ' + c.community_id}}</div>
+          <div class="node-path">${{c.node_count}} files · ${{c.total_sloc}} SLOC · ${{c.percent_total_sloc.toFixed(1)}}%</div>
+          <div class="metric-grid">
+            <div class="metric-card" title="Average fan-in"><div class="metric-label">Avg fan-in</div><div class="metric-value">${{fmt(c.avg_fan_in)}}</div></div>
+            <div class="metric-card" title="Average fan-out"><div class="metric-label">Avg fan-out</div><div class="metric-value">${{fmt(c.avg_fan_out)}}</div></div>
+            <div class="metric-card" title="Average functions per file"><div class="metric-label">Avg funcs</div><div class="metric-value">${{fmt(c.avg_function_count)}}</div></div>
+            <div class="metric-card"><div class="metric-label">Files</div><div class="metric-value">${{c.node_count}}</div></div>
+          </div>
+        `;
+        return;
+      }}
+      if (!node) return;
+      const tags = [];
+      if (node.has_cycle) tags.push(`<span class="tag tag-red">cycle</span>`);
+      if (node.parser_warning_count > 0) tags.push(`<span class="tag tag-yellow">${{node.parser_warning_count}} warnings</span>`);
+      if (node.community_id != null) tags.push(`<span class="tag tag-blue">cluster ${{node.community_id}}</span>`);
+      selEl.className = '';
+      selEl.innerHTML = `
+        <div class="node-name" title="${{node.absolute_name}}">${{node.display_name}}</div>
+        <div class="node-path">${{node.absolute_name}}</div>
+        <div class="metric-grid">
+          <div class="metric-card" title="Total lines in this file."><div class="metric-label">Lines</div><div class="metric-value">${{node.line_count}}</div></div>
+          <div class="metric-card" title="Fan-in: how many files import this one. High = widely used, risky to change."><div class="metric-label">Fan-in</div><div class="metric-value">${{node.metric_fan_in_dependency_graph}}</div></div>
+          <div class="metric-card" title="Fan-out: how many files this one imports. High = too many responsibilities."><div class="metric-label">Fan-out</div><div class="metric-value">${{node.metric_fan_out_dependency_graph}}</div></div>
+          <div class="metric-card" title="Number of functions and methods."><div class="metric-label">Functions</div><div class="metric-value">${{node.function_count}}</div></div>
+          <div class="metric-card" title="Weighted structural complexity (branch count sum across all functions)."><div class="metric-label">Complexity</div><div class="metric-value">${{node.metric_file_result_dependency_graph_louvain_modularity_in_file}}</div></div>
+          <div class="metric-card" title="Hotspot score: weighted signal combining size, complexity, and dependency coupling. Higher = refactor priority."><div class="metric-label">Hotspot</div><div class="metric-value" style="color:${{hotspotColor(node.metric_file_hotspot_score)}}">${{node.metric_file_hotspot_score}}</div></div>
+        </div>
+        ${{tags.length ? `<div class="node-tags">${{tags.join('')}}</div>` : ''}}
+      `;
+    }}
+
+    // ── render: policy findings ────────────────────────────────────
+    function renderPolicyFindings() {{
+      const ps = payload.policy_summary;
+      const parts = [];
+      if (ps.critical_count) parts.push(`${{ps.critical_count}} critical`);
+      if (ps.warning_count) parts.push(`${{ps.warning_count}} warning`);
+      policyAside.textContent = parts.join(' · ');
+
+      if (!payload.top_policy_findings || payload.top_policy_findings.length === 0) {{
+        policyEl.innerHTML = '<div class="empty-state">No policy findings.</div>';
+        return;
+      }}
+      policyEl.innerHTML = payload.top_policy_findings.map(f => `
+        <div class="finding-item">
+          <div class="finding-dot ${{f.severity}}"></div>
+          <div class="finding-body">
+            <div class="finding-msg">${{f.message}}</div>
+            ${{f.file ? `<div class="finding-file">${{f.file}}</div>` : ''}}
+          </div>
+        </div>
+      `).join('');
+    }}
+
+    // ── render: hot functions ──────────────────────────────────────
+    function renderHotFunctions() {{
+      if (!payload.top_functions || payload.top_functions.length === 0) {{
+        hotFnEl.innerHTML = '<div class="empty-state">No function data.</div>';
+        return;
+      }}
+      const maxScore = Math.max(...payload.top_functions.map(f => f.hotspot_score), 1);
+      hotFnEl.innerHTML = payload.top_functions.map(f => {{
+        const t = f.hotspot_score / maxScore;
+        const cls = t > 0.65 ? 'fn-score-high' : t > 0.35 ? 'fn-score-mid' : 'fn-score-low';
+        return `
+          <div class="fn-item" title="${{f.file}}:${{f.start_line}} · ${{f.line_count}} lines · cyclomatic ${{f.cyclomatic_estimate}}">
+            <div class="fn-body">
+              <div class="fn-name">${{f.function_name}}</div>
+              <div class="fn-file">${{f.file}}</div>
+            </div>
+            <div class="fn-score ${{cls}}">${{f.hotspot_score}}</div>
+          </div>
+        `;
+      }}).join('');
+    }}
+
+    // ── graph helpers ──────────────────────────────────────────────
+    function getVisibleNodes() {{
+      return nodes.filter(n => {{
+        const inCluster = activeCluster == null || n.community_id === activeCluster;
+        const haystack = (n.display_name + ' ' + n.absolute_name + ' ' + n.group).toLowerCase();
+        const inSearch = !searchTerm || haystack.includes(searchTerm);
+        return inCluster && inSearch;
+      }});
+    }}
+
+    function buildNeighborSet(sel) {{
+      if (!sel) return new Set();
+      const nb = new Set([sel.id]);
+      for (const lk of links) {{
+        if (lk.source === sel.id) nb.add(lk.target);
+        if (lk.target === sel.id) nb.add(lk.source);
+      }}
+      return nb;
+    }}
+
+    function hashVal(s) {{
+      return Array.from(s).reduce((a,c) => ((a*31)+c.charCodeAt(0))>>>0, 7);
+    }}
+
+    function assignInitialLayout() {{
+      const clusterMap = new Map();
+      for (const n of nodes) {{
+        const m = clusterMap.get(n.community_id) || [];
+        m.push(n);
+        clusterMap.set(n.community_id, m);
+      }}
+      const comms = [...clusterMap.keys()].sort((a,b) => a-b);
+      const cols = Math.max(1, Math.ceil(Math.sqrt(comms.length)));
+      const cx = W/2, cy = H/2;
+      comms.forEach((cid, ci) => {{
+        const members = [...clusterMap.get(cid)].sort((a,b) =>
+          (b.metric_fan_in_dependency_graph - a.metric_fan_in_dependency_graph) ||
+          a.absolute_name.localeCompare(b.absolute_name)
+        );
+        const row = Math.floor(ci/cols), col = ci%cols;
+        const angle = (ci/Math.max(1,comms.length))*Math.PI*2;
+        const rx = 280, ry = 210;
+        const ax = cx + (col-(cols-1)/2)*200 + Math.cos(angle)*Math.min(80, rx/Math.max(1,comms.length/6));
+        const ay = cy + (row-(Math.ceil(comms.length/cols)-1)/2)*170 + Math.sin(angle)*Math.min(60, ry/Math.max(1,comms.length/6));
+        members.forEach((n, i) => {{
+          const g = i*2.399963229728653;
+          const r = 16 + Math.sqrt(i+1)*20 + hashVal(n.id)%7;
+          n.x = Math.min(W-28, Math.max(28, ax+Math.cos(g)*r));
+          n.y = Math.min(H-28, Math.max(28, ay+Math.sin(g)*r));
+          n.vx = 0; n.vy = 0;
+        }});
+      }});
+    }}
+
+    function stabilizeLayout(iters) {{
+      const ideal = 82;
+      const cx = W/2, cy = H/2;
+      for (let iter = 0; iter < iters; iter++) {{
+        const alpha = 1 - iter/iters;
+        const anchors = new Map();
+        for (const n of nodes) {{
+          const a = anchors.get(n.community_id) || {{x:0,y:0,c:0}};
+          a.x+=n.x; a.y+=n.y; a.c++;
+          anchors.set(n.community_id, a);
+        }}
+        for (const a of anchors.values()) {{ a.x/=a.c; a.y/=a.c; }}
+        for (const n of nodes) {{
+          let fx=0, fy=0;
+          for (const o of nodes) {{
+            if (n===o) continue;
+            const dx=n.x-o.x, dy=n.y-o.y;
+            const dsq = Math.max(36, dx*dx+dy*dy);
+            const d = Math.sqrt(dsq);
+            const rep = (320*(0.3+alpha*0.85))/dsq;
+            fx += (dx/d)*rep; fy += (dy/d)*rep;
+          }}
+          const a = anchors.get(n.community_id);
+          fx += (a.x-n.x)*(0.012+alpha*0.018);
+          fy += (a.y-n.y)*(0.012+alpha*0.018);
+          fx += (cx-n.x)*0.001; fy += (cy-n.y)*0.001;
+          n.vx = (n.vx+fx)*0.78; n.vy = (n.vy+fy)*0.78;
+        }}
+        for (const lk of links) {{
+          const dx=lk.targetNode.x-lk.sourceNode.x, dy=lk.targetNode.y-lk.sourceNode.y;
+          const d=Math.max(1,Math.sqrt(dx*dx+dy*dy));
+          const sp=(d-ideal)*(0.018+alpha*0.014);
+          const fx=(dx/d)*sp, fy=(dy/d)*sp;
+          lk.sourceNode.vx+=fx; lk.sourceNode.vy+=fy;
+          lk.targetNode.vx-=fx; lk.targetNode.vy-=fy;
+        }}
+        for (const n of nodes) {{
+          n.x = Math.min(W-22, Math.max(22, n.x+n.vx));
+          n.y = Math.min(H-22, Math.max(22, n.y+n.vy));
+        }}
+      }}
+      for (const n of nodes) {{ n.vx=0; n.vy=0; }}
+    }}
+
+    // ── draw ───────────────────────────────────────────────────────
+    function draw() {{
+      const visIds = new Set(getVisibleNodes().map(n => n.id));
+      const selNode = activeNodeId ? nodeMap.get(activeNodeId) : null;
+      const nb = buildNeighborSet(selNode);
+      const visLinks = links.filter(lk => visIds.has(lk.source) && visIds.has(lk.target));
+
+      linkLayer.innerHTML = visLinks.map(lk => {{
+        const isActive = !!(selNode && (lk.source===selNode.id||lk.target===selNode.id));
+        const sameCom = lk.sourceNode.community_id === lk.targetNode.community_id;
+        let stroke, sw, so;
+        if (isActive) {{
+          stroke = colorMode==='hotspot' ? '#D9813A' : communityColor(lk.sourceNode.community_id);
+          sw = 2.5; so = 1;
+        }} else if (lk.cross_group) {{
+          stroke = 'var(--edge-cross)'; sw = 1; so = selNode && !isActive ? 0.06 : 0.55;
+        }} else if (sameCom && colorMode==='community') {{
+          stroke = communityColor(lk.sourceNode.community_id); sw = 1; so = selNode && !isActive ? 0.06 : 0.35;
+        }} else {{
+          stroke = 'var(--edge-default)'; sw = 1; so = selNode && !isActive ? 0.04 : 0.18;
+        }}
+        return `<line x1="${{lk.sourceNode.x.toFixed(1)}}" y1="${{lk.sourceNode.y.toFixed(1)}}" x2="${{lk.targetNode.x.toFixed(1)}}" y2="${{lk.targetNode.y.toFixed(1)}}" stroke="${{stroke}}" stroke-width="${{sw}}" stroke-opacity="${{so}}"/>`;
+      }}).join('');
+
+      nodeLayer.innerHTML = getVisibleNodes().map(n => {{
+        const isActive = activeNodeId===n.id;
+        const visible = !selNode || nb.has(n.id);
+        const fill = nodeColor(n);
+        const r = 5.5 + Math.sqrt(n.metric_fan_in_dependency_graph+n.metric_fan_out_dependency_graph+1)*1.9;
+        const showLabel = isActive || (selNode && visible) ||
+          (!selNode && colorMode==='hotspot' && n.metric_file_hotspot_score > maxHotspot*0.38) ||
+          (!selNode && colorMode==='community' && n.metric_fan_in_dependency_graph+n.metric_fan_out_dependency_graph >= 3);
+        const fo = visible ? 1 : 0.12;
+        let extras = '';
+        if (n.has_cycle) {{
+          extras += `<circle r="${{(r+4).toFixed(1)}}" fill="none" stroke="${{fill}}" stroke-width="1" stroke-dasharray="3 2" stroke-opacity="${{visible ? 0.65 : 0.08}}"/>`;
+        }}
+        return `
+          <g data-nid="${{n.id}}" transform="translate(${{n.x.toFixed(1)}} ${{n.y.toFixed(1)}})">
+            ${{extras}}
+            <circle r="${{r.toFixed(1)}}" fill="${{fill}}" fill-opacity="${{fo*0.92}}" stroke="${{isActive ? '#fff' : 'rgba(255,255,255,0.18)'}}" stroke-width="${{isActive ? 2 : 1}}" stroke-opacity="${{fo}}"/>
+            <text y="${{-(r+7)}}" text-anchor="middle" font-size="10.5" font-family="-apple-system,BlinkMacSystemFont,'Inter',sans-serif" fill="${{isActive ? '#fff' : 'var(--text-2)'}}" fill-opacity="${{showLabel ? fo : 0}}">${{n.display_name}}</text>
+          </g>
+        `;
+      }}).join('');
+
+      nodeLayer.querySelectorAll('[data-nid]').forEach(g => {{
+        g.style.cursor = 'pointer';
+        g.addEventListener('mouseenter', () => {{
+          updateSelection(nodeMap.get(g.dataset.nid));
+        }});
+        g.addEventListener('mouseleave', () => {{
+          updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null);
+        }});
+        g.addEventListener('mousedown', e => {{
+          draggingNode = nodeMap.get(g.dataset.nid);
+          e.preventDefault();
+        }});
+        g.addEventListener('click', e => {{
+          e.stopPropagation();
+          const n = nodeMap.get(g.dataset.nid);
+          activeNodeId = activeNodeId===n.id ? null : n.id;
+          activeCluster = null;
+          renderClusters();
+          updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null);
+          draw();
+        }});
+      }});
+    }}
+
+    // ── pan / drag ─────────────────────────────────────────────────
+    svg.addEventListener('mousemove', e => {{
       if (!draggingNode) return;
       const rect = svg.getBoundingClientRect();
-      const x = ((event.clientX - rect.left) / rect.width) * width;
-      const y = ((event.clientY - rect.top) / rect.height) * height;
-      draggingNode.x = x;
-      draggingNode.y = y;
-      draggingNode.vx = 0;
-      draggingNode.vy = 0;
+      draggingNode.x = ((e.clientX-rect.left)/rect.width)*W;
+      draggingNode.y = ((e.clientY-rect.top)/rect.height)*H;
+      draggingNode.vx=0; draggingNode.vy=0;
       draw();
     }});
-
-    svg.addEventListener('click', event => {{
-      if (event.target === svg) {{
-        activeNodeId = null;
-        updateSelection(null);
-        renderFiles();
-        draw();
+    svg.addEventListener('click', e => {{
+      if (e.target===svg||e.target.tagName==='svg') {{
+        activeNodeId=null; activeCluster=null;
+        renderClusters(); updateSelection(null); draw();
+      }}
+    }});
+    window.addEventListener('mouseup', () => {{ draggingNode=null; }});
+    document.addEventListener('keydown', e => {{
+      if (e.key==='Escape') {{
+        activeNodeId=null; activeCluster=null;
+        renderClusters(); updateSelection(null); draw();
       }}
     }});
 
-    window.addEventListener('mouseup', () => {{
-      draggingNode = null;
-    }});
-
+    // ── search ─────────────────────────────────────────────────────
     searchEl.addEventListener('input', () => {{
       searchTerm = searchEl.value.trim().toLowerCase();
-      renderFiles();
       draw();
     }});
 
-    graphTypeEl.innerHTML = payload.analysis_config.graph_types.map(type => `
-      <option value="${{type}}"${{type === payload.analysis_config.default_graph_type ? ' selected' : ''}}>${{graphTypeLabels[type] || type}}</option>
-    `).join('');
-    graphTypeEl.addEventListener('change', () => {{
-      activateGraph(graphTypeEl.value);
+    // ── graph type ─────────────────────────────────────────────────
+    graphTypeEl.innerHTML = payload.analysis_config.graph_types.map(t =>
+      `<option value="${{t}}"${{t===payload.analysis_config.default_graph_type?' selected':''}}>${{graphTypeLabels[t]||t}}</option>`
+    ).join('');
+    graphTypeEl.addEventListener('change', () => {{ activateGraph(graphTypeEl.value); }});
+
+    // ── color mode ─────────────────────────────────────────────────
+    document.getElementById('mode-community').addEventListener('click', () => {{
+      colorMode='community';
+      document.getElementById('mode-community').classList.add('active');
+      document.getElementById('mode-hotspot').classList.remove('active');
+      hotspotLegend.classList.add('hidden');
+      draw();
+    }});
+    document.getElementById('mode-hotspot').addEventListener('click', () => {{
+      colorMode='hotspot';
+      document.getElementById('mode-hotspot').classList.add('active');
+      document.getElementById('mode-community').classList.remove('active');
+      hotspotLegend.classList.remove('hidden');
+      draw();
     }});
 
+    // ── activate graph ─────────────────────────────────────────────
+    function activateGraph(type) {{
+      graphType = type;
+      graphPayload = payload.graphs[type];
+      nodes = graphPayload.graph.nodes.map((n,i) => ({{...n,index:i}}));
+      nodeMap = new Map(nodes.map(n => [n.id,n]));
+      links = graphPayload.graph.links.map(lk => ({{
+        ...lk,
+        sourceNode: nodeMap.get(lk.source),
+        targetNode: nodeMap.get(lk.target)
+      }})).filter(lk => lk.sourceNode && lk.targetNode);
+      clusters = Object.values(graphPayload.cluster_metrics_map).sort((a,b)=>a.community_id-b.community_id);
+      stats = graphPayload.statistics;
+      maxHotspot = Math.max(...nodes.map(n=>n.metric_file_hotspot_score), 1);
+      activeCluster=null; activeNodeId=null; draggingNode=null;
+      selEl.className='empty-state';
+      selEl.textContent='Click a node or cluster to inspect.';
+      assignInitialLayout();
+      stabilizeLayout(160);
+      renderStats();
+      renderClusters();
+      draw();
+    }}
+
+    // ── boot ───────────────────────────────────────────────────────
+    renderPolicyFindings();
+    renderHotFunctions();
     activateGraph(graphType);
   </script>
 </body>
@@ -1540,8 +1922,8 @@ mod tests {
             ],
         };
 
-        let export = build_export(&graph, &metrics);
-        let json = render_emerge_json(&graph, &metrics).expect("render export");
+        let export = build_export(&graph, &metrics, &[], 0);
+        let json = render_emerge_json(&graph, &metrics, &[], 0).expect("render export");
 
         assert_eq!(
             export
@@ -1560,5 +1942,7 @@ mod tests {
         );
         assert!(json.contains("\"metric_fan_in_dependency_graph\""));
         assert!(json.contains("\"cluster_metrics_map\""));
+        assert!(json.contains("\"policy_summary\""));
+        assert!(json.contains("\"top_functions\""));
     }
 }

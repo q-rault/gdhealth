@@ -7,7 +7,7 @@ use crate::metrics::compute_metrics;
 use crate::model::{
     GraphReport, HealthReport, HealthSummary, MetricsReport, OutputMetadata, PolicyReport,
 };
-use crate::output::{dot, json, text};
+use crate::output::{browser, dot, json, text};
 use crate::policy::collect_findings;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -100,6 +100,18 @@ pub fn emit_report_bundle(bundle_dir: &Path, artifacts: &HealthArtifacts) -> Res
     for (path, content) in outputs {
         fs::write_output(&path, &content)?;
     }
+
+    let root = PathBuf::from(&artifacts.graph.root);
+    let browser_dir = bundle_dir.join("browser");
+    let cross_group_dep_count = artifacts.health.cross_group_dependencies.len();
+    browser::emit_emerge_html(
+        &root,
+        Some(&browser_dir),
+        &artifacts.graph,
+        &artifacts.metrics,
+        &artifacts.policy.findings,
+        cross_group_dep_count,
+    )?;
 
     Ok(())
 }

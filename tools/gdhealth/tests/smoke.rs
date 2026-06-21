@@ -371,7 +371,7 @@ script = ExtResource("1")
     let json =
         fs::read_to_string(bundle_dir.join("graph-emerge.json")).expect("read browser payload");
 
-    assert!(html.contains("Graph Explorer"));
+    assert!(html.contains("gdhealth"));
     assert!(html.contains("metric_fan_in_dependency_graph"));
     assert!(json.contains("\"cluster_metrics_map\""));
     assert!(json.contains("\"items/item_profile.gd\""));

@@ -41,7 +41,7 @@ pub fn run() -> Result<()> {
             OutputFormat::EmergeJson => {
                 let graph = graph::build_graph(&config, &options)?;
                 let metrics = metrics::compute_metrics(&config, &options)?;
-                let rendered = output::browser::render_emerge_json(&graph, &metrics)?;
+                let rendered = output::browser::render_emerge_json(&graph, &metrics, &[], 0)?;
                 fs::emit_output(options.output.as_deref(), &rendered)
             }
             OutputFormat::EmergeHtml => {
@@ -52,6 +52,8 @@ pub fn run() -> Result<()> {
                     options.output.as_deref(),
                     &graph,
                     &metrics,
+                    &[],
+                    0,
                 )
             }
         },
