@@ -115,6 +115,7 @@ struct OverallMetricResults {
 #[derive(Debug, Clone, Serialize)]
 struct ClusterMetrics {
     community_id: usize,
+    label: String,
     node_count: usize,
     total_sloc: usize,
     percent_total_sloc: f64,
@@ -388,6 +389,7 @@ fn build_cluster_metrics(
                 community_id.to_string(),
                 ClusterMetrics {
                     community_id,
+                    label: derive_cluster_label(&accumulator.files),
                     node_count,
                     total_sloc: accumulator.total_sloc,
                     percent_total_sloc,
@@ -399,6 +401,81 @@ fn build_cluster_metrics(
             )
         })
         .collect()
+}
+
+fn derive_cluster_label(files: &[String]) -> String {
+    if files.is_empty() {
+        return "ungrouped".to_string();
+    }
+
+    if files.len() == 1 {
+        let path = Path::new(&files[0]);
+        return path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| files[0].clone());
+    }
+
+    let directories = files
+        .iter()
+        .map(|path| {
+            Path::new(path)
+                .parent()
+                .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+
+    let mut common_segments = directories
+        .first()
+        .map(|value| {
+            value
+                .split('/')
+                .filter(|segment| !segment.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    for directory in directories.iter().skip(1) {
+        let segments = directory
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        let shared_length = common_segments
+            .iter()
+            .zip(segments.iter())
+            .take_while(|(left, right)| left == right)
+            .count();
+        common_segments.truncate(shared_length);
+        if common_segments.is_empty() {
+            break;
+        }
+    }
+
+    if !common_segments.is_empty() {
+        return common_segments.join("/");
+    }
+
+    let mut counts = BTreeMap::<String, usize>::new();
+    for directory in directories {
+        let label = if directory.is_empty() {
+            "root".to_string()
+        } else {
+            directory
+                .split('/')
+                .next()
+                .map(str::to_string)
+                .unwrap_or_else(|| "root".to_string())
+        };
+        *counts.entry(label).or_insert(0) += 1;
+    }
+
+    counts
+        .into_iter()
+        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))
+        .map(|(label, _)| label)
+        .unwrap_or_else(|| "ungrouped".to_string())
 }
 
 fn average(total: usize, count: usize) -> f64 {
@@ -837,13 +914,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     const statsEl = document.getElementById('stats');
     const width = 960;
     const height = 720;
-    const MAX_SIMULATION_TICKS = 220;
-    const STABLE_ALPHA_THRESHOLD = 0.012;
     let activeCluster = null;
     let searchTerm = '';
     let activeNodeId = null;
-    let simulationTick = 0;
-    let simulationRunning = true;
 
     function colorForCommunity(communityId) {{
       const hue = (communityId * 57) % 360;
@@ -874,7 +947,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         <button class="cluster-item${{activeCluster === cluster.community_id ? ' active' : ''}}" data-community="${{cluster.community_id}}">
           <div class="cluster-title">
             <span class="swatch" style="background:${{colorForCommunity(cluster.community_id)}}"></span>
-            Cluster ${{cluster.community_id}}
+            ${{cluster.label || `Cluster ${{cluster.community_id}}`}}
           </div>
           <div class="meta">${{cluster.node_count}} files, ${{cluster.total_sloc}} SLOC, fan-in ${{formatNumber(cluster.avg_fan_in)}} / fan-out ${{formatNumber(cluster.avg_fan_out)}}</div>
         </button>
@@ -921,7 +994,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         const cluster = clusters.find(item => item.community_id === activeCluster);
         selectionEl.className = '';
         selectionEl.innerHTML = `
-          <h3>Cluster ${{cluster.community_id}}</h3>
+          <h3>${{cluster.label || `Cluster ${{cluster.community_id}}`}}</h3>
           <p class="meta">${{cluster.node_count}} files, ${{cluster.total_sloc}} SLOC, ${{cluster.percent_total_sloc.toFixed(1)}}% of project SLOC</p>
           <div class="detail-grid">
             <div class="detail-card"><span class="meta">Avg fan-in</span><strong>${{formatNumber(cluster.avg_fan_in)}}</strong></div>
@@ -959,23 +1032,147 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       }});
     }}
 
-    function seededPosition(node) {{
-      const hash = Array.from(node.id).reduce((acc, ch) => ((acc * 31) + ch.charCodeAt(0)) >>> 0, 7);
-      const clusterAngle = (node.community_id * 1.61803398875) % (Math.PI * 2);
-      const radius = 120 + (hash % 160);
-      return {{
-        x: width / 2 + Math.cos(clusterAngle + (hash % 360) * Math.PI / 180) * radius,
-        y: height / 2 + Math.sin(clusterAngle + (hash % 360) * Math.PI / 180) * radius
-      }};
+    function getSelectedNode() {{
+      return activeNodeId ? nodeMap.get(activeNodeId) : null;
     }}
 
-    nodes.forEach(node => {{
-      const pos = seededPosition(node);
-      node.x = pos.x;
-      node.y = pos.y;
-      node.vx = 0;
-      node.vy = 0;
-    }});
+    function buildNeighborSet(selectedNode) {{
+      if (!selectedNode) {{
+        return new Set();
+      }}
+      const neighbors = new Set([selectedNode.id]);
+      for (const link of links) {{
+        if (link.source === selectedNode.id) neighbors.add(link.target);
+        if (link.target === selectedNode.id) neighbors.add(link.source);
+      }}
+      return neighbors;
+    }}
+
+    function hashValue(text) {{
+      return Array.from(text).reduce((acc, ch) => ((acc * 31) + ch.charCodeAt(0)) >>> 0, 7);
+    }}
+
+    function sortClusterMembers(members) {{
+      return [...members].sort((left, right) => {{
+        if (right.metric_fan_in_dependency_graph !== left.metric_fan_in_dependency_graph) {{
+          return right.metric_fan_in_dependency_graph - left.metric_fan_in_dependency_graph;
+        }}
+        if (right.metric_fan_out_dependency_graph !== left.metric_fan_out_dependency_graph) {{
+          return right.metric_fan_out_dependency_graph - left.metric_fan_out_dependency_graph;
+        }}
+        return left.absolute_name.localeCompare(right.absolute_name);
+      }});
+    }}
+
+    function assignInitialLayout() {{
+      const clusterMap = new Map();
+      for (const node of nodes) {{
+        const members = clusterMap.get(node.community_id) || [];
+        members.push(node);
+        clusterMap.set(node.community_id, members);
+      }}
+
+      const communities = [...clusterMap.keys()].sort((a, b) => a - b);
+      const ringCount = Math.max(1, Math.ceil(Math.sqrt(communities.length)));
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const ringRadiusX = 290;
+      const ringRadiusY = 220;
+
+      communities.forEach((communityId, communityIndex) => {{
+        const members = sortClusterMembers(clusterMap.get(communityId) || []);
+        const row = Math.floor(communityIndex / ringCount);
+        const col = communityIndex % ringCount;
+        const rowOffset = (row - (Math.ceil(communities.length / ringCount) - 1) / 2) * 180;
+        const colOffset = (col - (ringCount - 1) / 2) * 220;
+        const angle = (communityIndex / Math.max(1, communities.length)) * Math.PI * 2;
+        const anchorX = centerX + colOffset + Math.cos(angle) * Math.min(90, ringRadiusX / Math.max(1, communities.length / 8));
+        const anchorY = centerY + rowOffset + Math.sin(angle) * Math.min(70, ringRadiusY / Math.max(1, communities.length / 8));
+
+        members.forEach((node, memberIndex) => {{
+          const golden = memberIndex * 2.399963229728653;
+          const localRadius = 18 + Math.sqrt(memberIndex + 1) * 22 + (hashValue(node.id) % 7);
+          node.x = Math.min(width - 30, Math.max(30, anchorX + Math.cos(golden) * localRadius));
+          node.y = Math.min(height - 30, Math.max(30, anchorY + Math.sin(golden) * localRadius));
+          node.vx = 0;
+          node.vy = 0;
+        }});
+      }});
+    }}
+
+    function stabilizeLayout(iterations) {{
+      const idealDistance = 84;
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const clusterAnchors = new Map();
+
+      for (const node of nodes) {{
+        const anchor = clusterAnchors.get(node.community_id) || {{ x: 0, y: 0, count: 0 }};
+        anchor.x += node.x;
+        anchor.y += node.y;
+        anchor.count += 1;
+        clusterAnchors.set(node.community_id, anchor);
+      }}
+
+      for (const anchor of clusterAnchors.values()) {{
+        anchor.x /= anchor.count;
+        anchor.y /= anchor.count;
+      }}
+
+      for (let iteration = 0; iteration < iterations; iteration += 1) {{
+        const alpha = 1 - (iteration / iterations);
+        for (const node of nodes) {{
+          let fx = 0;
+          let fy = 0;
+
+          for (const other of nodes) {{
+            if (node === other) continue;
+            const dx = node.x - other.x;
+            const dy = node.y - other.y;
+            const distanceSq = Math.max(64, dx * dx + dy * dy);
+            const distance = Math.sqrt(distanceSq);
+            const repulsion = (220 * alpha) / distanceSq;
+            fx += (dx / distance) * repulsion;
+            fy += (dy / distance) * repulsion;
+          }}
+
+          const anchor = clusterAnchors.get(node.community_id);
+          fx += (anchor.x - node.x) * (0.010 + alpha * 0.012);
+          fy += (anchor.y - node.y) * (0.010 + alpha * 0.012);
+          fx += (centerX - node.x) * 0.0008;
+          fy += (centerY - node.y) * 0.0008;
+
+          node.vx = (node.vx + fx) * 0.74;
+          node.vy = (node.vy + fy) * 0.74;
+        }}
+
+        for (const link of links) {{
+          const dx = link.targetNode.x - link.sourceNode.x;
+          const dy = link.targetNode.y - link.sourceNode.y;
+          const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+          const spring = (distance - idealDistance) * (0.012 + alpha * 0.010);
+          const fx = (dx / distance) * spring;
+          const fy = (dy / distance) * spring;
+          link.sourceNode.vx += fx;
+          link.sourceNode.vy += fy;
+          link.targetNode.vx -= fx;
+          link.targetNode.vy -= fy;
+        }}
+
+        for (const node of nodes) {{
+          node.x = Math.min(width - 24, Math.max(24, node.x + node.vx));
+          node.y = Math.min(height - 24, Math.max(24, node.y + node.vy));
+        }}
+      }}
+
+      for (const node of nodes) {{
+        node.vx = 0;
+        node.vy = 0;
+      }}
+    }}
+
+    assignInitialLayout();
+    stabilizeLayout(90);
 
     const linkLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const nodeLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -986,23 +1183,29 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     function draw() {{
       const visibleIds = new Set(getVisibleNodes().map(node => node.id));
       const visibleLinks = links.filter(link => visibleIds.has(link.source) && visibleIds.has(link.target));
+      const selectedNode = getSelectedNode();
+      const neighborSet = buildNeighborSet(selectedNode);
       linkLayer.innerHTML = visibleLinks.map(link => `
         <line
           x1="${{link.sourceNode.x.toFixed(1)}}"
           y1="${{link.sourceNode.y.toFixed(1)}}"
           x2="${{link.targetNode.x.toFixed(1)}}"
           y2="${{link.targetNode.y.toFixed(1)}}"
-          stroke="var(--edge)"
-          stroke-width="1.2"
+          stroke="${{selectedNode && (link.source === selectedNode.id || link.target === selectedNode.id) ? 'var(--accent-2)' : 'var(--edge)'}}"
+          stroke-width="${{selectedNode && (link.source === selectedNode.id || link.target === selectedNode.id) ? 3.2 : 1.2}}"
+          stroke-opacity="${{selectedNode && !(link.source === selectedNode.id || link.target === selectedNode.id) ? 0.08 : 0.9}}"
         />
       `).join('');
       nodeLayer.innerHTML = getVisibleNodes().map(node => {{
         const radius = 6 + Math.sqrt(node.metric_fan_in_dependency_graph + node.metric_fan_out_dependency_graph + 1) * 2;
         const highlighted = activeNodeId === node.id;
+        const related = !selectedNode || neighborSet.has(node.id);
+        const fill = colorForCommunity(node.community_id);
+        const showLabel = highlighted || (selectedNode && related) || (!selectedNode && (node.metric_fan_in_dependency_graph + node.metric_fan_out_dependency_graph >= 3));
         return `
           <g data-node-id="${{node.id}}" transform="translate(${{node.x.toFixed(1)}} ${{node.y.toFixed(1)}})">
-            <circle r="${{radius.toFixed(1)}}" fill="${{colorForCommunity(node.community_id)}}" stroke="${{highlighted ? 'var(--accent-2)' : 'rgba(255,255,255,0.85)'}}" stroke-width="${{highlighted ? 3 : 1.5}}"></circle>
-            <text y="-${{radius + 8}}" text-anchor="middle" font-size="11" fill="var(--ink)">${{node.display_name}}</text>
+            <circle r="${{radius.toFixed(1)}}" fill="${{fill}}" fill-opacity="${{related ? 0.96 : 0.16}}" stroke="${{highlighted ? 'var(--accent-2)' : 'rgba(255,255,255,0.85)'}}" stroke-width="${{highlighted ? 3 : 1.5}}" stroke-opacity="${{related ? 1 : 0.3}}"></circle>
+            <text y="-${{radius + 8}}" text-anchor="middle" font-size="11" fill="var(--ink)" fill-opacity="${{showLabel ? (related ? 1 : 0.26) : 0}}">${{node.display_name}}</text>
           </g>
         `;
       }}).join('');
@@ -1018,91 +1221,16 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         group.addEventListener('mousedown', event => {{
           const node = nodeMap.get(group.getAttribute('data-node-id'));
           draggingNode = node;
-          activeNodeId = node.id;
-          updateSelection(node);
-          renderFiles();
-          draw();
           event.preventDefault();
         }});
         group.addEventListener('click', () => {{
           const node = nodeMap.get(group.getAttribute('data-node-id'));
-          activeNodeId = node.id;
-          updateSelection(node);
+          activeNodeId = activeNodeId === node.id ? null : node.id;
+          updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null);
           renderFiles();
           draw();
         }});
       }});
-    }}
-
-    function simulate() {{
-      if (!simulationRunning) {{
-        return;
-      }}
-
-      const visible = getVisibleNodes();
-      const visibleSet = new Set(visible.map(node => node.id));
-      const visibleLinks = links.filter(link => visibleSet.has(link.source) && visibleSet.has(link.target));
-      let totalVelocity = 0;
-
-      for (const node of visible) {{
-        let ax = 0;
-        let ay = 0;
-        for (const other of visible) {{
-          if (node === other) continue;
-          const dx = node.x - other.x;
-          const dy = node.y - other.y;
-          const distanceSq = Math.max(36, dx * dx + dy * dy);
-          const repulsion = 1400 / distanceSq;
-          ax += (dx / Math.sqrt(distanceSq)) * repulsion;
-          ay += (dy / Math.sqrt(distanceSq)) * repulsion;
-        }}
-
-        const clusterAngle = (node.community_id * 57) * Math.PI / 180;
-        const targetX = width / 2 + Math.cos(clusterAngle) * 160;
-        const targetY = height / 2 + Math.sin(clusterAngle) * 160;
-        ax += (targetX - node.x) * 0.0025;
-        ay += (targetY - node.y) * 0.0025;
-        ax += (width / 2 - node.x) * 0.0008;
-        ay += (height / 2 - node.y) * 0.0008;
-
-        node.vx = (node.vx + ax) * 0.88;
-        node.vy = (node.vy + ay) * 0.88;
-      }}
-
-      for (const link of visibleLinks) {{
-        const dx = link.targetNode.x - link.sourceNode.x;
-        const dy = link.targetNode.y - link.sourceNode.y;
-        const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-        const force = (distance - 86) * 0.0022;
-        const fx = (dx / distance) * force;
-        const fy = (dy / distance) * force;
-        link.sourceNode.vx += fx;
-        link.sourceNode.vy += fy;
-        link.targetNode.vx -= fx;
-        link.targetNode.vy -= fy;
-      }}
-
-      for (const node of visible) {{
-        if (draggingNode && draggingNode.id === node.id) continue;
-        node.x = Math.min(width - 24, Math.max(24, node.x + node.vx));
-        node.y = Math.min(height - 24, Math.max(24, node.y + node.vy));
-        totalVelocity += Math.abs(node.vx) + Math.abs(node.vy);
-      }}
-
-      draw();
-      simulationTick += 1;
-      const averageVelocity = visible.length === 0 ? 0 : totalVelocity / visible.length;
-      if (simulationTick >= MAX_SIMULATION_TICKS || averageVelocity <= STABLE_ALPHA_THRESHOLD) {{
-        simulationRunning = false;
-        for (const node of nodes) {{
-          node.vx = 0;
-          node.vy = 0;
-        }}
-        draw();
-        return;
-      }}
-
-      requestAnimationFrame(simulate);
     }}
 
     svg.addEventListener('mousemove', event => {{
@@ -1115,6 +1243,15 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       draggingNode.vx = 0;
       draggingNode.vy = 0;
       draw();
+    }});
+
+    svg.addEventListener('click', event => {{
+      if (event.target === svg) {{
+        activeNodeId = null;
+        updateSelection(null);
+        renderFiles();
+        draw();
+      }}
     }});
 
     window.addEventListener('mouseup', () => {{
@@ -1131,7 +1268,6 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     renderClusters();
     renderFiles();
     draw();
-    simulate();
   </script>
 </body>
 </html>"#
