@@ -2,6 +2,12 @@
 
 `gdhealth` is the Rust implementation package for the repository PoC. It analyzes Godot GDScript repositories and exposes `graph`, `metrics`, `policy`, and `health` commands over the same discovery pipeline.
 
+## Local usage
+
+from `tools/gdhealth` run in the terminal : `cargo install --path . --force` (`--force` allows replacing an existing gdhealth)
+You can then use `gdhealth` commands from any project
+
+
 ## Current Status
 
 The crate now covers Steps 1 through 4 of the implementation plan:
