@@ -110,6 +110,7 @@ Generated reports will live under `reports/code-health/`:
 Optional later output:
 
 - `health.html`
+- `graph --format emerge-html`
 
 ## Implementation Priorities
 

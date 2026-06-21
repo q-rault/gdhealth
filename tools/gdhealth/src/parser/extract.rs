@@ -58,10 +58,14 @@ pub fn parse_file(_path: &str, content: &str) -> ParsedFile {
     let mut class_name = None;
     let mut dependencies = Vec::new();
     let warnings = Vec::new();
+    let mut const_initializer_balance = 0isize;
 
     for (index, line) in content.lines().enumerate() {
         let line_number = index + 1;
         let code = strip_comments(line);
+        let trimmed = code.trim_start();
+        let starts_const = trimmed.starts_with("const ");
+        let in_const_initializer = starts_const || const_initializer_balance > 0;
 
         if class_name.is_none() {
             if let Some(captures) = CLASS_NAME_RE.captures(code) {
@@ -88,12 +92,10 @@ pub fn parse_file(_path: &str, content: &str) -> ParsedFile {
             }
         }
 
-        let is_const_line = code.trim_start().starts_with("const ");
-
         for captures in PRELOAD_RE.captures_iter(code) {
             if let Some(resource_path) = captures.get(1).or_else(|| captures.get(2)) {
                 dependencies.push(DependencyReference {
-                    kind: if is_const_line {
+                    kind: if in_const_initializer {
                         DependencyKind::ConstPreload
                     } else {
                         DependencyKind::Preload
@@ -113,6 +115,17 @@ pub fn parse_file(_path: &str, content: &str) -> ParsedFile {
                 });
             }
         }
+
+        if starts_const {
+            const_initializer_balance = code
+                .split_once('=')
+                .map(|(_, initializer)| delimiter_balance(initializer))
+                .unwrap_or(0)
+                .max(0);
+        } else if const_initializer_balance > 0 {
+            const_initializer_balance =
+                (const_initializer_balance + delimiter_balance(code)).max(0);
+        }
     }
 
     ParsedFile {
@@ -127,6 +140,16 @@ fn strip_comments(line: &str) -> &str {
         Some(index) => &line[..index],
         None => line,
     }
+}
+
+fn delimiter_balance(segment: &str) -> isize {
+    segment
+        .chars()
+        .fold(0isize, |balance, character| match character {
+            '(' | '[' | '{' => balance + 1,
+            ')' | ']' | '}' => balance - 1,
+            _ => balance,
+        })
 }
 
 #[cfg(test)]
@@ -170,5 +193,26 @@ var concrete = load("res://runtime_helper.gd")
             parsed.dependencies[0].target,
             DependencyTarget::NamedClass(ref class_name) if class_name == "BaseThing"
         ));
+    }
+
+    #[test]
+    fn treats_preloads_inside_multiline_const_initializers_as_const_preloads() {
+        let parsed = parse_file(
+            "item_catalog.gd",
+            r#"
+const _ITEMS: Array[ItemProfile] = [
+    preload("res://items/amp_tome.tres"),
+    preload("res://items/blasting_wand.tres"),
+]
+"#,
+        );
+
+        assert_eq!(parsed.dependencies.len(), 2);
+        assert!(
+            parsed
+                .dependencies
+                .iter()
+                .all(|dependency| matches!(dependency.kind, DependencyKind::ConstPreload))
+        );
     }
 }

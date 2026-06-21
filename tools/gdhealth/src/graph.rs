@@ -4,9 +4,16 @@ use crate::discovery::discover_files;
 use crate::error::{GdHealthError, Result};
 use crate::model::{DependencyEdge, DependencyKind, GraphReport, OutputMetadata, ProjectFile};
 use crate::parser::extract::{DependencyReference, DependencyTarget, ParsedFile, parse_file};
+use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+static EXT_RESOURCE_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\[ext_resource[^\]]*\bpath=(?:"([^"]+)"|'([^']+)')"#)
+        .expect("valid ext_resource path regex")
+});
 
 pub fn build_graph(config: &Config, options: &CommandOptions) -> Result<GraphReport> {
     let files = discover_files(config, options)?;
@@ -15,22 +22,23 @@ pub fn build_graph(config: &Config, options: &CommandOptions) -> Result<GraphRep
     let class_index = build_class_index(&parsed_files);
     let mut parser_warnings = collect_class_warnings(&parsed_files, &class_index);
     let mut edges = Vec::new();
+    let mut resolver = DependencyResolver::new(root, &class_index);
 
     for file in &files {
         if let Some(parsed) = parsed_files.get(&file.path) {
             for dependency in &parsed.dependencies {
-                match resolve_dependency(root, &file.path, dependency, &class_index) {
-                    Some(target) => edges.push(DependencyEdge {
+                let targets = resolver.resolve_dependency(&file.path, dependency);
+                if targets.is_empty() {
+                    if should_warn_unresolved(dependency) {
+                        parser_warnings.push(format_unresolved_warning(&file.path, dependency));
+                    }
+                } else {
+                    edges.extend(targets.into_iter().map(|target| DependencyEdge {
                         from: file.path.clone(),
                         to: target,
                         kind: dependency.kind.clone(),
                         line: dependency.line,
-                    }),
-                    None => {
-                        if should_warn_unresolved(dependency) {
-                            parser_warnings.push(format_unresolved_warning(&file.path, dependency));
-                        }
-                    }
+                    }));
                 }
             }
         }
@@ -132,27 +140,95 @@ fn collect_class_warnings(
     warnings
 }
 
-fn resolve_dependency(
-    root: &Path,
-    from_path: &str,
-    dependency: &DependencyReference,
-    class_index: &BTreeMap<String, Vec<(String, usize)>>,
-) -> Option<String> {
-    match &dependency.target {
-        DependencyTarget::ResourcePath(path) => resolve_resource_path(root, from_path, path),
-        DependencyTarget::NamedClass(class_name) => class_index
-            .get(class_name)
-            .and_then(|matches| matches.first())
-            .map(|entry| entry.0.clone()),
+struct DependencyResolver<'a> {
+    root: &'a Path,
+    class_index: &'a BTreeMap<String, Vec<(String, usize)>>,
+    asset_target_cache: BTreeMap<String, Vec<String>>,
+}
+
+impl<'a> DependencyResolver<'a> {
+    fn new(root: &'a Path, class_index: &'a BTreeMap<String, Vec<(String, usize)>>) -> Self {
+        Self {
+            root,
+            class_index,
+            asset_target_cache: BTreeMap::new(),
+        }
+    }
+
+    fn resolve_dependency(
+        &mut self,
+        from_path: &str,
+        dependency: &DependencyReference,
+    ) -> Vec<String> {
+        match &dependency.target {
+            DependencyTarget::ResourcePath(path) => {
+                self.resolve_resource_dependency(from_path, path)
+            }
+            DependencyTarget::NamedClass(class_name) => self
+                .class_index
+                .get(class_name)
+                .and_then(|matches| matches.first())
+                .map(|entry| vec![entry.0.clone()])
+                .unwrap_or_default(),
+        }
+    }
+
+    fn resolve_resource_dependency(&mut self, from_path: &str, target: &str) -> Vec<String> {
+        let Some(candidate) = resolve_resource_path(self.root, from_path, target) else {
+            return Vec::new();
+        };
+
+        let mut targets = BTreeSet::from([candidate.clone()]);
+        if is_expandable_asset(&candidate) {
+            targets.extend(self.collect_asset_targets(&candidate));
+        }
+
+        targets.into_iter().collect()
+    }
+
+    fn collect_asset_targets(&mut self, asset_path: &str) -> Vec<String> {
+        if let Some(cached) = self.asset_target_cache.get(asset_path) {
+            return cached.clone();
+        }
+
+        let mut visiting = BTreeSet::new();
+        let resolved = self.collect_asset_targets_inner(asset_path, &mut visiting);
+        self.asset_target_cache
+            .insert(asset_path.to_string(), resolved.clone());
+        resolved
+    }
+
+    fn collect_asset_targets_inner(
+        &mut self,
+        asset_path: &str,
+        visiting: &mut BTreeSet<String>,
+    ) -> Vec<String> {
+        if !visiting.insert(asset_path.to_string()) {
+            return Vec::new();
+        }
+
+        let Some(content) = fs::read_to_string(self.root.join(asset_path)).ok() else {
+            visiting.remove(asset_path);
+            return Vec::new();
+        };
+
+        let mut targets = BTreeSet::new();
+        for referenced_path in extract_ext_resource_paths(&content) {
+            if let Some(resolved) = resolve_resource_path(self.root, asset_path, &referenced_path) {
+                targets.insert(resolved.clone());
+                if is_expandable_asset(&resolved) {
+                    targets.extend(self.collect_asset_targets_inner(&resolved, visiting));
+                }
+            }
+        }
+
+        visiting.remove(asset_path);
+        targets.into_iter().collect()
     }
 }
 
 fn resolve_resource_path(root: &Path, from_path: &str, target: &str) -> Option<String> {
     let normalized = normalize_resource_reference(target);
-    if !normalized.ends_with(".gd") {
-        return None;
-    }
-
     let candidate = if target.starts_with("res://") {
         normalized
     } else {
@@ -164,6 +240,29 @@ fn resolve_resource_path(root: &Path, from_path: &str, target: &str) -> Option<S
 
     let absolute = root.join(&candidate);
     absolute.exists().then_some(candidate)
+}
+
+fn extract_ext_resource_paths(content: &str) -> Vec<String> {
+    EXT_RESOURCE_PATH_RE
+        .captures_iter(content)
+        .filter_map(|captures| {
+            captures
+                .get(1)
+                .or_else(|| captures.get(2))
+                .map(|value| value.as_str().to_string())
+        })
+        .collect()
+}
+
+fn is_expandable_asset(path: &str) -> bool {
+    path.ends_with(".tscn") || path.ends_with(".tres")
+}
+
+fn is_supported_resource_reference(path: &str) -> bool {
+    path.ends_with(".gd")
+        || path.ends_with(".tscn")
+        || path.ends_with(".tres")
+        || path.ends_with(".gdshader")
 }
 
 fn normalize_resource_reference(path: &str) -> String {
@@ -198,7 +297,7 @@ fn normalize_relative_path(base: &Path, path: &Path) -> String {
 
 fn should_warn_unresolved(dependency: &DependencyReference) -> bool {
     match &dependency.target {
-        DependencyTarget::ResourcePath(path) => path.ends_with(".gd"),
+        DependencyTarget::ResourcePath(path) => is_supported_resource_reference(path),
         DependencyTarget::NamedClass(_) => false,
     }
 }
@@ -207,7 +306,7 @@ fn format_unresolved_warning(from_path: &str, dependency: &DependencyReference) 
     match &dependency.target {
         DependencyTarget::ResourcePath(path) => {
             format!(
-                "{from_path}:{}: unresolved script path `{path}`",
+                "{from_path}:{}: unresolved resource path `{path}`",
                 dependency.line
             )
         }
@@ -345,8 +444,13 @@ impl Tarjan {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_cycles, normalize_relative_path, resolve_resource_path};
+    use super::{
+        DependencyResolver, extract_ext_resource_paths, find_cycles, normalize_relative_path,
+        resolve_resource_path,
+    };
     use crate::model::{DependencyEdge, DependencyKind, ProjectFile};
+    use crate::parser::extract::{DependencyReference, DependencyTarget};
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     #[test]
@@ -400,5 +504,75 @@ mod tests {
         let result =
             normalize_relative_path(Path::new("levels/main_level"), Path::new("../hud.gd"));
         assert_eq!(result, "levels/hud.gd");
+    }
+
+    #[test]
+    fn resolves_non_script_resource_paths() {
+        let root = std::env::temp_dir().join(format!("gdhealth-asset-test-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("items")).expect("create temp fixture");
+        std::fs::write(root.join("items/amp_tome.tres"), "[resource]\n")
+            .expect("write temp fixture");
+
+        let result =
+            resolve_resource_path(&root, "items/item_catalog.gd", "res://items/amp_tome.tres");
+        assert_eq!(result.as_deref(), Some("items/amp_tome.tres"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn extracts_ext_resource_paths_from_assets() {
+        let paths = extract_ext_resource_paths(
+            r#"
+[ext_resource type="Script" path="res://item_profile.gd" id="1"]
+[ext_resource type="PackedScene" path='res://ui/shop.tscn' id="2"]
+"#,
+        );
+
+        assert_eq!(
+            paths,
+            vec![
+                "res://item_profile.gd".to_string(),
+                "res://ui/shop.tscn".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn expands_asset_dependencies_from_direct_resource_reference() {
+        let root =
+            std::env::temp_dir().join(format!("gdhealth-asset-expand-test-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("items")).expect("create items fixture");
+        std::fs::write(root.join("items/item_profile.gd"), "extends Resource\n")
+            .expect("write script fixture");
+        std::fs::write(
+            root.join("items/amp_tome.tres"),
+            r#"
+[gd_resource type="Resource" load_steps=2 format=3]
+[ext_resource type="Script" path="res://items/item_profile.gd" id="1"]
+[resource]
+script = ExtResource("1")
+"#,
+        )
+        .expect("write resource fixture");
+
+        let dependency = DependencyReference {
+            kind: DependencyKind::ConstPreload,
+            target: DependencyTarget::ResourcePath("res://items/amp_tome.tres".to_string()),
+            line: 1,
+        };
+        let class_index = BTreeMap::new();
+        let mut resolver = DependencyResolver::new(&root, &class_index);
+        let resolved = resolver.resolve_dependency("items/item_catalog.gd", &dependency);
+
+        assert_eq!(
+            resolved,
+            vec![
+                "items/amp_tome.tres".to_string(),
+                "items/item_profile.gd".to_string()
+            ]
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

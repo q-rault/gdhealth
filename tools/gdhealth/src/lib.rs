@@ -21,23 +21,46 @@ pub fn run() -> Result<()> {
     let config = Config::load(cli.config.as_deref())?;
 
     match cli.command {
-        Command::Graph(options) => {
-            let report = graph::build_graph(&config, &options)?;
-            let rendered = match options.format {
-                OutputFormat::Json => output::json::render(&report)?,
-                OutputFormat::Dot => output::dot::render_graph(&report),
-                OutputFormat::Text => output::text::render_graph(&report),
-            };
-
-            fs::emit_output(options.output.as_deref(), &rendered)
-        }
+        Command::Graph(options) => match options.format {
+            OutputFormat::Json => {
+                let report = graph::build_graph(&config, &options)?;
+                let rendered = output::json::render(&report)?;
+                fs::emit_output(options.output.as_deref(), &rendered)
+            }
+            OutputFormat::Dot => {
+                let report = graph::build_graph(&config, &options)?;
+                let rendered = output::dot::render_graph(&report);
+                fs::emit_output(options.output.as_deref(), &rendered)
+            }
+            OutputFormat::Text => {
+                let report = graph::build_graph(&config, &options)?;
+                let rendered = output::text::render_graph(&report);
+                fs::emit_output(options.output.as_deref(), &rendered)
+            }
+            OutputFormat::EmergeJson => {
+                let graph = graph::build_graph(&config, &options)?;
+                let metrics = metrics::compute_metrics(&config, &options)?;
+                let rendered = output::browser::render_emerge_json(&graph, &metrics)?;
+                fs::emit_output(options.output.as_deref(), &rendered)
+            }
+            OutputFormat::EmergeHtml => {
+                let graph = graph::build_graph(&config, &options)?;
+                let metrics = metrics::compute_metrics(&config, &options)?;
+                output::browser::emit_emerge_html(
+                    options.root.as_path(),
+                    options.output.as_deref(),
+                    &graph,
+                    &metrics,
+                )
+            }
+        },
         Command::Metrics(options) => {
             let report = metrics::compute_metrics(&config, &options)?;
             let rendered = match options.format {
                 OutputFormat::Json => output::json::render(&report)?,
-                OutputFormat::Dot => {
+                OutputFormat::Dot | OutputFormat::EmergeJson | OutputFormat::EmergeHtml => {
                     return Err(crate::error::GdHealthError::UnsupportedFormat(
-                        "metrics does not support dot output".to_string(),
+                        "metrics does not support dot or browser output".to_string(),
                     ));
                 }
                 OutputFormat::Text => output::text::render_metrics(&report),
@@ -49,9 +72,9 @@ pub fn run() -> Result<()> {
             let report = policy::evaluate_policy(&config, &options)?;
             let rendered = match options.format {
                 OutputFormat::Json => output::json::render(&report)?,
-                OutputFormat::Dot => {
+                OutputFormat::Dot | OutputFormat::EmergeJson | OutputFormat::EmergeHtml => {
                     return Err(crate::error::GdHealthError::UnsupportedFormat(
-                        "policy does not support dot output".to_string(),
+                        "policy does not support dot or browser output".to_string(),
                     ));
                 }
                 OutputFormat::Text => output::text::render_policy(&report),
@@ -66,9 +89,9 @@ pub fn run() -> Result<()> {
             if let Some(output_path) = options.output.as_deref() {
                 let rendered = match options.format {
                     OutputFormat::Json => output::json::render(&artifacts.health)?,
-                    OutputFormat::Dot => {
+                    OutputFormat::Dot | OutputFormat::EmergeJson | OutputFormat::EmergeHtml => {
                         return Err(crate::error::GdHealthError::UnsupportedFormat(
-                            "health does not support dot output".to_string(),
+                            "health does not support dot or browser output".to_string(),
                         ));
                     }
                     OutputFormat::Text => output::text::render_health(&artifacts.health),

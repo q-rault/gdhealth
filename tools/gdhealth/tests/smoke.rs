@@ -300,6 +300,82 @@ const STATE = preload("res://shared/state.gd")
     );
     assert_eq!(policy_a, policy_b);
 
+    let emerge_a = run_and_read(
+        &fixture_root,
+        &[
+            "graph",
+            "--root",
+            ".",
+            "--format",
+            "emerge-json",
+            "--output",
+            "emerge-a.json",
+        ],
+        "emerge-a.json",
+    );
+    let emerge_b = run_and_read(
+        &fixture_root,
+        &[
+            "graph",
+            "--root",
+            ".",
+            "--format",
+            "emerge-json",
+            "--output",
+            "emerge-b.json",
+        ],
+        "emerge-b.json",
+    );
+    assert_eq!(emerge_a, emerge_b);
+
+    fs::remove_dir_all(&fixture_root).ok();
+}
+
+#[test]
+fn graph_emerge_html_writes_browser_bundle() {
+    let fixture_root = unique_temp_dir("gdhealth-emerge-html");
+    write_repo(
+        &fixture_root,
+        &bundle_config("warning", "[]"),
+        &[
+            (
+                "items/item_catalog.gd",
+                r#"extends RefCounted
+const ITEM = preload("res://items/amp_tome.tres")
+"#,
+            ),
+            (
+                "items/amp_tome.tres",
+                r#"
+[gd_resource type="Resource" load_steps=2 format=3]
+[ext_resource type="Script" path="res://items/item_profile.gd" id="1"]
+[resource]
+script = ExtResource("1")
+"#,
+            ),
+            ("items/item_profile.gd", "extends Resource\n"),
+        ],
+    );
+
+    let output = run_gdhealth(
+        &fixture_root,
+        &["graph", "--root", ".", "--format", "emerge-html"],
+    );
+    assert_success(&output);
+
+    let bundle_dir = fixture_root
+        .join("reports")
+        .join("code-health")
+        .join("browser");
+    let html = fs::read_to_string(bundle_dir.join("emerge.html")).expect("read html bundle");
+    let json =
+        fs::read_to_string(bundle_dir.join("graph-emerge.json")).expect("read browser payload");
+
+    assert!(html.contains("Graph Explorer"));
+    assert!(html.contains("metric_fan_in_dependency_graph"));
+    assert!(json.contains("\"cluster_metrics_map\""));
+    assert!(json.contains("\"items/item_profile.gd\""));
+
     fs::remove_dir_all(&fixture_root).ok();
 }
 

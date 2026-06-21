@@ -25,6 +25,8 @@ pub enum OutputFormat {
     Json,
     Text,
     Dot,
+    EmergeJson,
+    EmergeHtml,
 }
 
 #[derive(Debug, Args)]
