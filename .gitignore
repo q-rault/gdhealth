@@ -1,0 +1,5 @@
+/tools/gdhealth/target/
+/reports/code-health/*.json
+/reports/code-health/*.dot
+/reports/code-health/*.txt
+/reports/code-health/*.html
