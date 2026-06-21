@@ -57,7 +57,8 @@ pub fn run() -> Result<()> {
                 OutputFormat::Text => output::text::render_policy(&report),
             };
 
-            fs::emit_output(options.output.as_deref(), &rendered)
+            fs::emit_output(options.output.as_deref(), &rendered)?;
+            policy::enforce_fail_on(&report.findings, options.fail_on.as_deref())
         }
         Command::Health(options) => {
             let report = health::build_health_report(&config, &options)?;
@@ -71,7 +72,8 @@ pub fn run() -> Result<()> {
                 OutputFormat::Text => output::text::render_health(&report),
             };
 
-            fs::emit_output(options.output.as_deref(), &rendered)
+            fs::emit_output(options.output.as_deref(), &rendered)?;
+            policy::enforce_fail_on(&report.policy_findings, options.fail_on.as_deref())
         }
     }
 }

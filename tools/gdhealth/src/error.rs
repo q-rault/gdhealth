@@ -22,6 +22,10 @@ pub enum GdHealthError {
     Json(#[from] serde_json::Error),
     #[error("invalid glob pattern `{pattern}`: {message}")]
     InvalidGlob { pattern: String, message: String },
+    #[error("invalid severity `{severity}`")]
+    InvalidSeverity { severity: String },
     #[error("unsupported format: {0}")]
     UnsupportedFormat(String),
+    #[error("policy threshold triggered: {message}")]
+    FailOnTriggered { message: String },
 }
