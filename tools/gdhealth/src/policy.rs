@@ -411,6 +411,9 @@ mod tests {
             }],
             cycles: vec![vec!["server/a.gd".to_string()]],
             parser_warnings: vec![],
+            file_communities: Vec::new(),
+            file_graph_metrics: None,
+            entity_scan: None,
         };
 
         let metrics = MetricsReport {
@@ -420,11 +423,15 @@ mod tests {
                 file: "server/a.gd".to_string(),
                 line_count: 1200,
                 function_count: 1,
+                number_of_methods: 1,
                 signal_count: 0,
                 public_function_count: 1,
                 outgoing_dependency_count: 1,
                 incoming_dependency_count: 0,
                 cycle_count: 1,
+                ws_complexity: 16,
+                tfidf: 0.8,
+                louvain_modularity: 0,
                 file_hotspot_score: 10,
             }],
             functions: vec![FunctionMetric {
@@ -439,6 +446,7 @@ mod tests {
                 parameter_count: 6,
                 hotspot_score: 99,
             }],
+            entities: Vec::new(),
         };
 
         let findings = collect_findings(&config, &graph, &metrics).expect("policy findings");

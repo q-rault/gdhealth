@@ -10,6 +10,14 @@ pub fn render_graph(report: &GraphReport) -> String {
         format!("edges: {}", report.edges.len()),
         format!("cycles: {}", report.cycles.len()),
         format!("parser warnings: {}", report.parser_warnings.len()),
+        format!(
+            "entity scan: {} entities",
+            report
+                .entity_scan
+                .as_ref()
+                .map(|scan| scan.entities.len())
+                .unwrap_or(0)
+        ),
         "discovered files:".to_string(),
     ];
 
@@ -58,6 +66,7 @@ pub fn render_metrics(report: &MetricsReport) -> String {
     let mut lines = vec![
         format!("root: {}", report.root),
         format!("files analyzed: {}", report.files.len()),
+        format!("entities analyzed: {}", report.entities.len()),
         "top files:".to_string(),
     ];
 
@@ -79,6 +88,21 @@ pub fn render_metrics(report: &MetricsReport) -> String {
                 function.cyclomatic_estimate,
                 function.max_nesting_depth,
                 function.hotspot_score
+            )
+        }));
+    }
+
+    if !report.entities.is_empty() {
+        lines.push("top entities:".to_string());
+        lines.extend(report.entities.iter().take(10).map(|entity| {
+            format!(
+                "- {} (file: {}, methods: {}, ws: {}, fan-in: {}, fan-out: {})",
+                entity.entity,
+                entity.file,
+                entity.method_count,
+                entity.ws_complexity,
+                entity.incoming_dependency_count,
+                entity.outgoing_dependency_count
             )
         }));
     }

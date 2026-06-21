@@ -1,3 +1,4 @@
+use crate::analysis::{analyze_file_graph, build_entity_scan};
 use crate::cli::CommandOptions;
 use crate::config::Config;
 use crate::discovery::discover_files;
@@ -54,7 +55,7 @@ pub fn build_graph(config: &Config, options: &CommandOptions) -> Result<GraphRep
 
     let cycles = find_cycles(&files, &edges);
 
-    Ok(GraphReport {
+    let mut report = GraphReport {
         metadata: OutputMetadata::default(),
         root: options.root.to_string_lossy().into_owned(),
         file_count: files.len(),
@@ -62,7 +63,16 @@ pub fn build_graph(config: &Config, options: &CommandOptions) -> Result<GraphRep
         edges,
         cycles,
         parser_warnings,
-    })
+        file_communities: Vec::new(),
+        file_graph_metrics: None,
+        entity_scan: None,
+    };
+    let file_graph_analysis = analyze_file_graph(&report);
+    report.file_communities = file_graph_analysis.communities;
+    report.file_graph_metrics = Some(file_graph_analysis.metrics);
+    report.entity_scan = Some(build_entity_scan(root, &report, &[])?);
+
+    Ok(report)
 }
 
 fn parse_project_files(root: &Path, files: &[ProjectFile]) -> Result<BTreeMap<String, ParsedFile>> {

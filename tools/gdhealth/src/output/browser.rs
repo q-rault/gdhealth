@@ -1,6 +1,8 @@
 use crate::error::Result;
 use crate::fs;
-use crate::model::{DependencyKind, GraphReport, MetricsReport, TOOL_NAME, TOOL_VERSION};
+use crate::model::{
+    DependencyKind, EntityEdge, EntityMetric, GraphReport, MetricsReport, TOOL_NAME, TOOL_VERSION,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -42,6 +44,9 @@ struct AnalysisConfig {
 #[derive(Debug, Clone, Serialize)]
 struct GraphsExport {
     file_result_dependency_graph: EnrichedGraphExport,
+    entity_result_dependency_graph: EnrichedGraphExport,
+    entity_result_inheritance_graph: EnrichedGraphExport,
+    entity_result_complete_graph: EnrichedGraphExport,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -106,10 +111,7 @@ struct GraphStatistics {
 
 #[derive(Debug, Clone, Serialize)]
 struct OverallMetricResults {
-    metric_file_result_dependency_graph_louvain_modularity: f64,
-    metric_file_result_dependency_graph_community_count: usize,
-    metric_file_result_dependency_graph_total_sloc: usize,
-    metric_file_result_dependency_graph_total_parser_warnings: usize,
+    metrics: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,18 +166,20 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
         .iter()
         .map(|metric| (metric.file.as_str(), metric))
         .collect::<BTreeMap<_, _>>();
-    let community_assignment = detect_communities(graph);
-    let community_count = community_assignment
+    let community_by_file = graph
+        .file_communities
         .iter()
-        .copied()
-        .collect::<BTreeSet<_>>()
-        .len();
+        .map(|item| (item.id.as_str(), item.community_id))
+        .collect::<BTreeMap<_, _>>();
+    let file_graph_metrics = graph
+        .file_graph_metrics
+        .as_ref()
+        .expect("file graph metrics should exist");
 
     let nodes = graph
         .files
         .iter()
-        .enumerate()
-        .map(|(index, file)| {
+        .map(|file| {
             let metric = metric_by_file
                 .get(file.path.as_str())
                 .copied()
@@ -199,12 +203,15 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
                 signal_count: metric.signal_count,
                 parser_warning_count,
                 has_cycle: cycle_membership.contains(file.path.as_str()),
-                community_id: community_assignment[index],
+                community_id: community_by_file
+                    .get(file.path.as_str())
+                    .copied()
+                    .unwrap_or(0),
                 metric_sloc_in_file: file.line_count,
                 metric_fan_in_dependency_graph: metric.incoming_dependency_count,
                 metric_fan_out_dependency_graph: metric.outgoing_dependency_count,
-                metric_file_result_dependency_graph_louvain_modularity_in_file:
-                    community_assignment[index],
+                metric_file_result_dependency_graph_louvain_modularity_in_file: metric
+                    .louvain_modularity,
                 metric_file_hotspot_score: metric.file_hotspot_score,
             }
         })
@@ -222,14 +229,40 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
         .collect::<Vec<_>>();
 
     let total_sloc = nodes.iter().map(|node| node.line_count).sum::<usize>();
-    let cluster_metrics_map = build_cluster_metrics(&nodes, total_sloc);
-    let group_count = graph
-        .files
+    let file_cluster_metrics_map = build_cluster_metrics(&nodes, total_sloc);
+    let entity_scan = graph
+        .entity_scan
+        .as_ref()
+        .expect("entity scan should exist");
+    let entity_metric_by_id = metrics
+        .entities
         .iter()
-        .map(|file| file.group.as_deref().unwrap_or("ungrouped"))
-        .collect::<BTreeSet<_>>()
-        .len();
-    let modularity = compute_modularity(graph, &community_assignment);
+        .map(|metric| (metric.entity.as_str(), metric))
+        .collect::<BTreeMap<_, _>>();
+    let entity_dependency_export = build_entity_graph_export(
+        "entity_result_dependency_graph",
+        &entity_scan.entities,
+        &entity_scan.dependency_edges,
+        &entity_metric_by_id,
+        &entity_scan.communities,
+        entity_scan.complete_graph_metrics.total_sloc,
+    );
+    let entity_inheritance_export = build_entity_graph_export(
+        "entity_result_inheritance_graph",
+        &entity_scan.entities,
+        &entity_scan.inheritance_edges,
+        &entity_metric_by_id,
+        &entity_scan.communities,
+        entity_scan.complete_graph_metrics.total_sloc,
+    );
+    let entity_complete_export = build_entity_graph_export(
+        "entity_result_complete_graph",
+        &entity_scan.entities,
+        &entity_scan.complete_edges,
+        &entity_metric_by_id,
+        &entity_scan.communities,
+        entity_scan.complete_graph_metrics.total_sloc,
+    );
 
     BrowserExport {
         metadata: BrowserMetadata {
@@ -240,7 +273,12 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
             root: graph.root.clone(),
         },
         analysis_config: AnalysisConfig {
-            graph_types: vec!["file_result_dependency_graph"],
+            graph_types: vec![
+                "file_result_dependency_graph",
+                "entity_result_dependency_graph",
+                "entity_result_inheritance_graph",
+                "entity_result_complete_graph",
+            ],
             default_graph_type: "file_result_dependency_graph",
             default_link_distance: DEFAULT_LINK_DISTANCE,
             default_charge_force: DEFAULT_CHARGE_FORCE,
@@ -265,21 +303,130 @@ fn build_export(graph: &GraphReport, metrics: &MetricsReport) -> BrowserExport {
                     edge_count: graph.edges.len(),
                     cycle_count: graph.cycles.len(),
                     parser_warning_count: graph.parser_warnings.len(),
-                    community_count,
-                    group_count,
+                    community_count: file_graph_metrics.community_count,
+                    group_count: file_graph_metrics.group_count,
                     total_sloc,
                 },
                 overall_metric_results: OverallMetricResults {
-                    metric_file_result_dependency_graph_louvain_modularity: modularity,
-                    metric_file_result_dependency_graph_community_count: community_count,
-                    metric_file_result_dependency_graph_total_sloc: total_sloc,
-                    metric_file_result_dependency_graph_total_parser_warnings: graph
-                        .parser_warnings
-                        .len(),
+                    metrics: BTreeMap::from([
+                        (
+                            "metric_file_result_dependency_graph_louvain_modularity".to_string(),
+                            format!("{:.6}", file_graph_metrics.louvain_modularity),
+                        ),
+                        (
+                            "metric_file_result_dependency_graph_community_count".to_string(),
+                            file_graph_metrics.community_count.to_string(),
+                        ),
+                        (
+                            "metric_file_result_dependency_graph_total_sloc".to_string(),
+                            total_sloc.to_string(),
+                        ),
+                        (
+                            "metric_file_result_dependency_graph_total_parser_warnings".to_string(),
+                            graph.parser_warnings.len().to_string(),
+                        ),
+                    ]),
                 },
-                cluster_metrics_map,
+                cluster_metrics_map: file_cluster_metrics_map,
             },
+            entity_result_dependency_graph: entity_dependency_export,
+            entity_result_inheritance_graph: entity_inheritance_export,
+            entity_result_complete_graph: entity_complete_export,
         },
+    }
+}
+
+fn build_entity_graph_export(
+    graph_name: &'static str,
+    entities: &[crate::model::EntityNode],
+    edges: &[EntityEdge],
+    entity_metric_by_id: &BTreeMap<&str, &EntityMetric>,
+    communities: &[crate::model::GraphCommunity],
+    total_sloc: usize,
+) -> EnrichedGraphExport {
+    let community_by_id = communities
+        .iter()
+        .map(|item| (item.id.as_str(), item.community_id))
+        .collect::<BTreeMap<_, _>>();
+    let nodes = entities
+        .iter()
+        .map(|entity| {
+            let metric = entity_metric_by_id
+                .get(entity.id.as_str())
+                .copied()
+                .expect("entity metrics should exist for every entity");
+            BrowserNode {
+                id: entity.id.clone(),
+                display_name: entity.display_name.clone(),
+                absolute_name: entity.file.clone(),
+                group: Path::new(&entity.file)
+                    .parent()
+                    .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|| "root".to_string()),
+                line_count: entity.line_count,
+                function_count: entity.method_count,
+                signal_count: 0,
+                parser_warning_count: 0,
+                has_cycle: false,
+                community_id: community_by_id
+                    .get(entity.id.as_str())
+                    .copied()
+                    .unwrap_or(0),
+                metric_sloc_in_file: entity.line_count,
+                metric_fan_in_dependency_graph: metric.incoming_dependency_count,
+                metric_fan_out_dependency_graph: metric.outgoing_dependency_count,
+                metric_file_result_dependency_graph_louvain_modularity_in_file: metric
+                    .louvain_modularity,
+                metric_file_hotspot_score: metric.ws_complexity,
+            }
+        })
+        .collect::<Vec<_>>();
+    let links = edges
+        .iter()
+        .map(|edge| BrowserLink {
+            source: edge.from.clone(),
+            target: edge.to.clone(),
+            kind: dependency_kind_label(&edge.kind).to_string(),
+            line: edge.line,
+        })
+        .collect::<Vec<_>>();
+    let cluster_metrics_map = build_cluster_metrics(&nodes, total_sloc);
+    let community_count = communities
+        .iter()
+        .map(|item| item.community_id)
+        .collect::<BTreeSet<_>>()
+        .len();
+
+    EnrichedGraphExport {
+        graph: GraphPayload {
+            directed: true,
+            multigraph: false,
+            graph: GraphPayloadMetadata { name: graph_name },
+            nodes,
+            links,
+        },
+        statistics: GraphStatistics {
+            node_count: entities.len(),
+            edge_count: edges.len(),
+            cycle_count: 0,
+            parser_warning_count: 0,
+            community_count,
+            group_count: 0,
+            total_sloc,
+        },
+        overall_metric_results: OverallMetricResults {
+            metrics: BTreeMap::from([
+                (
+                    format!("metric_{graph_name}_community_count"),
+                    community_count.to_string(),
+                ),
+                (
+                    format!("metric_{graph_name}_total_sloc"),
+                    total_sloc.to_string(),
+                ),
+            ]),
+        },
+        cluster_metrics_map,
     }
 }
 
@@ -486,181 +633,6 @@ fn average(total: usize, count: usize) -> f64 {
     }
 }
 
-fn detect_communities(graph: &GraphReport) -> Vec<usize> {
-    let node_count = graph.files.len();
-    if node_count == 0 {
-        return Vec::new();
-    }
-
-    let index_by_file = graph
-        .files
-        .iter()
-        .enumerate()
-        .map(|(index, file)| (file.path.as_str(), index))
-        .collect::<BTreeMap<_, _>>();
-    let adjacency = build_undirected_adjacency(graph, &index_by_file);
-    let mut communities = (0..node_count).collect::<Vec<_>>();
-
-    if graph.edges.is_empty() {
-        return communities;
-    }
-
-    let mut improved = true;
-    while improved {
-        improved = false;
-        for node_index in 0..node_count {
-            let current = communities[node_index];
-            let baseline = compute_modularity_from_adjacency(&adjacency, &communities);
-            let mut best_score = baseline;
-            let mut best_community = current;
-            let mut candidates = adjacency[node_index]
-                .iter()
-                .map(|(neighbor, _)| communities[*neighbor])
-                .collect::<BTreeSet<_>>();
-            candidates.insert(current);
-
-            for candidate in candidates {
-                if candidate == current {
-                    continue;
-                }
-
-                communities[node_index] = candidate;
-                let score = compute_modularity_from_adjacency(&adjacency, &communities);
-                if score > best_score + 1e-9
-                    || ((score - best_score).abs() <= 1e-9 && candidate < best_community)
-                {
-                    best_score = score;
-                    best_community = candidate;
-                }
-            }
-
-            communities[node_index] = best_community;
-            if best_community != current {
-                improved = true;
-            }
-        }
-    }
-
-    renumber_communities(&graph.files, &communities)
-}
-
-fn renumber_communities(files: &[crate::model::ProjectFile], communities: &[usize]) -> Vec<usize> {
-    let mut files_by_community = BTreeMap::<usize, Vec<&str>>::new();
-    for (index, file) in files.iter().enumerate() {
-        files_by_community
-            .entry(communities[index])
-            .or_default()
-            .push(file.path.as_str());
-    }
-
-    let ordered = files_by_community
-        .into_iter()
-        .map(|(community, mut files)| {
-            files.sort();
-            (community, files[0].to_string())
-        })
-        .collect::<Vec<_>>();
-    let mut ordered = ordered;
-    ordered.sort_by(|left, right| left.1.cmp(&right.1));
-
-    let remap = ordered
-        .into_iter()
-        .enumerate()
-        .map(|(new_id, (old_id, _))| (old_id, new_id))
-        .collect::<BTreeMap<_, _>>();
-
-    communities
-        .iter()
-        .map(|community| remap[community])
-        .collect::<Vec<_>>()
-}
-
-fn build_undirected_adjacency(
-    graph: &GraphReport,
-    index_by_file: &BTreeMap<&str, usize>,
-) -> Vec<Vec<(usize, f64)>> {
-    let mut edge_weights = BTreeMap::<(usize, usize), f64>::new();
-
-    for edge in &graph.edges {
-        let Some(&source) = index_by_file.get(edge.from.as_str()) else {
-            continue;
-        };
-        let Some(&target) = index_by_file.get(edge.to.as_str()) else {
-            continue;
-        };
-        if source == target {
-            continue;
-        }
-
-        let pair = if source < target {
-            (source, target)
-        } else {
-            (target, source)
-        };
-        *edge_weights.entry(pair).or_insert(0.0) += 1.0;
-    }
-
-    let mut adjacency = vec![Vec::<(usize, f64)>::new(); graph.files.len()];
-    for ((source, target), weight) in edge_weights {
-        adjacency[source].push((target, weight));
-        adjacency[target].push((source, weight));
-    }
-    for neighbors in &mut adjacency {
-        neighbors.sort_by(|left, right| left.0.cmp(&right.0));
-    }
-    adjacency
-}
-
-fn compute_modularity(graph: &GraphReport, communities: &[usize]) -> f64 {
-    let index_by_file = graph
-        .files
-        .iter()
-        .enumerate()
-        .map(|(index, file)| (file.path.as_str(), index))
-        .collect::<BTreeMap<_, _>>();
-    let adjacency = build_undirected_adjacency(graph, &index_by_file);
-    compute_modularity_from_adjacency(&adjacency, communities)
-}
-
-fn compute_modularity_from_adjacency(
-    adjacency: &[Vec<(usize, f64)>],
-    communities: &[usize],
-) -> f64 {
-    let mut total_weight = 0.0;
-    let mut internal_weight_by_community = BTreeMap::<usize, f64>::new();
-    let mut degree_by_community = BTreeMap::<usize, f64>::new();
-
-    for (node_index, neighbors) in adjacency.iter().enumerate() {
-        let community = communities[node_index];
-        let degree = neighbors.iter().map(|(_, weight)| *weight).sum::<f64>();
-        *degree_by_community.entry(community).or_insert(0.0) += degree;
-
-        for (neighbor, weight) in neighbors {
-            if node_index < *neighbor {
-                total_weight += *weight;
-                if communities[*neighbor] == community {
-                    *internal_weight_by_community.entry(community).or_insert(0.0) += *weight;
-                }
-            }
-        }
-    }
-
-    if total_weight <= f64::EPSILON {
-        return 0.0;
-    }
-
-    degree_by_community
-        .into_iter()
-        .map(|(community, degree_sum)| {
-            let internal = internal_weight_by_community
-                .get(&community)
-                .copied()
-                .unwrap_or(0.0);
-            (internal / total_weight) - (degree_sum / (2.0 * total_weight)).powi(2)
-        })
-        .sum()
-}
-
 fn render_html(data_json: &str, project_name: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -729,6 +701,15 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       width: 100%;
       border: 1px solid var(--border);
       border-radius: 999px;
+      padding: 12px 14px;
+      font: inherit;
+      background: rgba(255, 255, 255, 0.8);
+      color: var(--ink);
+    }}
+    .graph-select {{
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 14px;
       padding: 12px 14px;
       font: inherit;
       background: rgba(255, 255, 255, 0.8);
@@ -864,6 +845,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <h1>{project_name}</h1>
           <p>Force-directed dependency view with deterministic cluster metrics.</p>
         </div>
+        <select id="graph-type" class="graph-select"></select>
         <input id="search" class="search" type="search" placeholder="Search files or groups">
         <section>
           <h2>Graph Stats</h2>
@@ -886,7 +868,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <div id="selection" class="empty">Hover or click a node to inspect file metrics.</div>
         </section>
         <section class="files">
-          <h2>Visible Files</h2>
+          <h2>Visible Nodes</h2>
           <div id="files" class="scroll"></div>
         </section>
       </div>
@@ -895,25 +877,28 @@ fn render_html(data_json: &str, project_name: &str) -> String {
   <script id="graph-data" type="application/json">{data_json}</script>
   <script>
     const payload = JSON.parse(document.getElementById('graph-data').textContent);
-    const graphType = payload.analysis_config.default_graph_type;
-    const graphPayload = payload.graphs[graphType];
-    const nodes = graphPayload.graph.nodes.map((node, index) => ({{ ...node, index }}));
-    const nodeMap = new Map(nodes.map(node => [node.id, node]));
-    const links = graphPayload.graph.links.map(link => ({{
-      ...link,
-      sourceNode: nodeMap.get(link.source),
-      targetNode: nodeMap.get(link.target)
-    }})).filter(link => link.sourceNode && link.targetNode);
-    const clusters = Object.values(graphPayload.cluster_metrics_map).sort((a, b) => a.community_id - b.community_id);
-    const stats = graphPayload.statistics;
+    const graphTypeLabels = {{
+      file_result_dependency_graph: 'File dependencies',
+      entity_result_dependency_graph: 'Entity dependencies',
+      entity_result_inheritance_graph: 'Entity inheritance',
+      entity_result_complete_graph: 'Entity complete'
+    }};
     const selectionEl = document.getElementById('selection');
     const clustersEl = document.getElementById('clusters');
     const filesEl = document.getElementById('files');
     const searchEl = document.getElementById('search');
+    const graphTypeEl = document.getElementById('graph-type');
     const svg = document.getElementById('graph');
     const statsEl = document.getElementById('stats');
     const width = 960;
     const height = 720;
+    let graphType = payload.analysis_config.default_graph_type;
+    let graphPayload = null;
+    let nodes = [];
+    let nodeMap = new Map();
+    let links = [];
+    let clusters = [];
+    let stats = null;
     let activeCluster = null;
     let searchTerm = '';
     let activeNodeId = null;
@@ -929,7 +914,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
     function renderStats() {{
       const cards = [
-        ['Files', stats.node_count],
+        ['Nodes', stats.node_count],
         ['Edges', stats.edge_count],
         ['Clusters', stats.community_count],
         ['SLOC', stats.total_sloc],
@@ -1104,23 +1089,22 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       const idealDistance = 84;
       const centerX = width / 2;
       const centerY = height / 2;
-      const clusterAnchors = new Map();
-
-      for (const node of nodes) {{
-        const anchor = clusterAnchors.get(node.community_id) || {{ x: 0, y: 0, count: 0 }};
-        anchor.x += node.x;
-        anchor.y += node.y;
-        anchor.count += 1;
-        clusterAnchors.set(node.community_id, anchor);
-      }}
-
-      for (const anchor of clusterAnchors.values()) {{
-        anchor.x /= anchor.count;
-        anchor.y /= anchor.count;
-      }}
 
       for (let iteration = 0; iteration < iterations; iteration += 1) {{
         const alpha = 1 - (iteration / iterations);
+        const clusterAnchors = new Map();
+        for (const node of nodes) {{
+          const anchor = clusterAnchors.get(node.community_id) || {{ x: 0, y: 0, count: 0 }};
+          anchor.x += node.x;
+          anchor.y += node.y;
+          anchor.count += 1;
+          clusterAnchors.set(node.community_id, anchor);
+        }}
+        for (const anchor of clusterAnchors.values()) {{
+          anchor.x /= anchor.count;
+          anchor.y /= anchor.count;
+        }}
+
         for (const node of nodes) {{
           let fx = 0;
           let fy = 0;
@@ -1129,28 +1113,28 @@ fn render_html(data_json: &str, project_name: &str) -> String {
             if (node === other) continue;
             const dx = node.x - other.x;
             const dy = node.y - other.y;
-            const distanceSq = Math.max(64, dx * dx + dy * dy);
+            const distanceSq = Math.max(49, dx * dx + dy * dy);
             const distance = Math.sqrt(distanceSq);
-            const repulsion = (220 * alpha) / distanceSq;
+            const repulsion = (340 * (0.35 + alpha * 0.9)) / distanceSq;
             fx += (dx / distance) * repulsion;
             fy += (dy / distance) * repulsion;
           }}
 
           const anchor = clusterAnchors.get(node.community_id);
-          fx += (anchor.x - node.x) * (0.010 + alpha * 0.012);
-          fy += (anchor.y - node.y) * (0.010 + alpha * 0.012);
-          fx += (centerX - node.x) * 0.0008;
-          fy += (centerY - node.y) * 0.0008;
+          fx += (anchor.x - node.x) * (0.015 + alpha * 0.02);
+          fy += (anchor.y - node.y) * (0.015 + alpha * 0.02);
+          fx += (centerX - node.x) * 0.0012;
+          fy += (centerY - node.y) * 0.0012;
 
-          node.vx = (node.vx + fx) * 0.74;
-          node.vy = (node.vy + fy) * 0.74;
+          node.vx = (node.vx + fx) * 0.78;
+          node.vy = (node.vy + fy) * 0.78;
         }}
 
         for (const link of links) {{
           const dx = link.targetNode.x - link.sourceNode.x;
           const dy = link.targetNode.y - link.sourceNode.y;
           const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-          const spring = (distance - idealDistance) * (0.012 + alpha * 0.010);
+          const spring = (distance - idealDistance) * (0.02 + alpha * 0.016);
           const fx = (dx / distance) * spring;
           const fy = (dy / distance) * spring;
           link.sourceNode.vx += fx;
@@ -1171,14 +1155,36 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       }}
     }}
 
-    assignInitialLayout();
-    stabilizeLayout(90);
-
     const linkLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const nodeLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     svg.append(linkLayer, nodeLayer);
 
     let draggingNode = null;
+
+    function activateGraph(nextGraphType) {{
+      graphType = nextGraphType;
+      graphPayload = payload.graphs[graphType];
+      nodes = graphPayload.graph.nodes.map((node, index) => ({{ ...node, index }}));
+      nodeMap = new Map(nodes.map(node => [node.id, node]));
+      links = graphPayload.graph.links.map(link => ({{
+        ...link,
+        sourceNode: nodeMap.get(link.source),
+        targetNode: nodeMap.get(link.target)
+      }})).filter(link => link.sourceNode && link.targetNode);
+      clusters = Object.values(graphPayload.cluster_metrics_map).sort((a, b) => a.community_id - b.community_id);
+      stats = graphPayload.statistics;
+      activeCluster = null;
+      activeNodeId = null;
+      draggingNode = null;
+      selectionEl.className = 'empty';
+      selectionEl.textContent = 'Hover or click a node to inspect node metrics.';
+      assignInitialLayout();
+      stabilizeLayout(160);
+      renderStats();
+      renderClusters();
+      renderFiles();
+      draw();
+    }}
 
     function draw() {{
       const visibleIds = new Set(getVisibleNodes().map(node => node.id));
@@ -1264,10 +1270,14 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       draw();
     }});
 
-    renderStats();
-    renderClusters();
-    renderFiles();
-    draw();
+    graphTypeEl.innerHTML = payload.analysis_config.graph_types.map(type => `
+      <option value="${{type}}"${{type === payload.analysis_config.default_graph_type ? ' selected' : ''}}>${{graphTypeLabels[type] || type}}</option>
+    `).join('');
+    graphTypeEl.addEventListener('change', () => {{
+      activateGraph(graphTypeEl.value);
+    }});
+
+    activateGraph(graphType);
   </script>
 </body>
 </html>"#
@@ -1278,7 +1288,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 mod tests {
     use super::{build_export, render_emerge_json};
     use crate::model::{
-        DependencyEdge, DependencyKind, FileMetric, GraphReport, MetricsReport, OutputMetadata,
+        DependencyEdge, DependencyKind, EntityMetric, EntityNode, EntityScanReport, FileMetric,
+        GraphAggregateMetrics, GraphCommunity, GraphReport, MetricsReport, OutputMetadata,
         ProjectFile,
     };
 
@@ -1326,6 +1337,94 @@ mod tests {
             parser_warnings: vec![
                 "c.gd:2: unresolved resource path `res://missing.gd`".to_string(),
             ],
+            file_communities: vec![
+                GraphCommunity {
+                    id: "a.gd".to_string(),
+                    community_id: 0,
+                },
+                GraphCommunity {
+                    id: "b.gd".to_string(),
+                    community_id: 0,
+                },
+                GraphCommunity {
+                    id: "c.gd".to_string(),
+                    community_id: 1,
+                },
+            ],
+            file_graph_metrics: Some(GraphAggregateMetrics {
+                louvain_modularity: 0.25,
+                community_count: 2,
+                total_sloc: 45,
+                group_count: 2,
+            }),
+            entity_scan: Some(EntityScanReport {
+                entities: vec![
+                    EntityNode {
+                        id: "A".to_string(),
+                        display_name: "A".to_string(),
+                        file: "a.gd".to_string(),
+                        class_name: Some("A".to_string()),
+                        extends: None,
+                        start_line: 1,
+                        end_line: 20,
+                        line_count: 20,
+                        method_count: 2,
+                    },
+                    EntityNode {
+                        id: "B".to_string(),
+                        display_name: "B".to_string(),
+                        file: "b.gd".to_string(),
+                        class_name: Some("B".to_string()),
+                        extends: Some("A".to_string()),
+                        start_line: 1,
+                        end_line: 15,
+                        line_count: 15,
+                        method_count: 1,
+                    },
+                ],
+                dependency_edges: vec![crate::model::EntityEdge {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                    kind: DependencyKind::Preload,
+                    line: 3,
+                }],
+                inheritance_edges: vec![crate::model::EntityEdge {
+                    from: "B".to_string(),
+                    to: "A".to_string(),
+                    kind: DependencyKind::Extends,
+                    line: 1,
+                }],
+                complete_edges: vec![
+                    crate::model::EntityEdge {
+                        from: "A".to_string(),
+                        to: "B".to_string(),
+                        kind: DependencyKind::Preload,
+                        line: 3,
+                    },
+                    crate::model::EntityEdge {
+                        from: "B".to_string(),
+                        to: "A".to_string(),
+                        kind: DependencyKind::Extends,
+                        line: 1,
+                    },
+                ],
+                communities: vec![
+                    GraphCommunity {
+                        id: "A".to_string(),
+                        community_id: 0,
+                    },
+                    GraphCommunity {
+                        id: "B".to_string(),
+                        community_id: 0,
+                    },
+                ],
+                complete_graph_metrics: GraphAggregateMetrics {
+                    louvain_modularity: 0.0,
+                    community_count: 1,
+                    total_sloc: 35,
+                    group_count: 0,
+                },
+            }),
         };
         let metrics = MetricsReport {
             metadata: OutputMetadata::default(),
@@ -1335,37 +1434,77 @@ mod tests {
                     file: "a.gd".to_string(),
                     line_count: 20,
                     function_count: 2,
+                    number_of_methods: 2,
                     signal_count: 0,
                     public_function_count: 1,
                     outgoing_dependency_count: 1,
                     incoming_dependency_count: 1,
                     cycle_count: 1,
+                    ws_complexity: 8,
+                    tfidf: 0.7,
+                    louvain_modularity: 0,
                     file_hotspot_score: 14,
                 },
                 FileMetric {
                     file: "b.gd".to_string(),
                     line_count: 15,
                     function_count: 1,
+                    number_of_methods: 1,
                     signal_count: 1,
                     public_function_count: 1,
                     outgoing_dependency_count: 1,
                     incoming_dependency_count: 1,
                     cycle_count: 1,
+                    ws_complexity: 4,
+                    tfidf: 0.6,
+                    louvain_modularity: 0,
                     file_hotspot_score: 12,
                 },
                 FileMetric {
                     file: "c.gd".to_string(),
                     line_count: 10,
                     function_count: 1,
+                    number_of_methods: 1,
                     signal_count: 0,
                     public_function_count: 1,
                     outgoing_dependency_count: 0,
                     incoming_dependency_count: 0,
                     cycle_count: 0,
+                    ws_complexity: 2,
+                    tfidf: 0.4,
+                    louvain_modularity: 1,
                     file_hotspot_score: 5,
                 },
             ],
             functions: Vec::new(),
+            entities: vec![
+                EntityMetric {
+                    entity: "A".to_string(),
+                    file: "a.gd".to_string(),
+                    line_count: 20,
+                    method_count: 2,
+                    ws_complexity: 8,
+                    tfidf: 0.7,
+                    incoming_dependency_count: 0,
+                    outgoing_dependency_count: 1,
+                    incoming_inheritance_count: 1,
+                    outgoing_inheritance_count: 0,
+                    louvain_modularity: 0,
+                },
+                EntityMetric {
+                    entity: "B".to_string(),
+                    file: "b.gd".to_string(),
+                    line_count: 15,
+                    method_count: 1,
+                    ws_complexity: 4,
+                    tfidf: 0.6,
+                    incoming_dependency_count: 1,
+                    outgoing_dependency_count: 0,
+                    incoming_inheritance_count: 0,
+                    outgoing_inheritance_count: 1,
+                    louvain_modularity: 0,
+                },
+            ],
         };
 
         let export = build_export(&graph, &metrics);

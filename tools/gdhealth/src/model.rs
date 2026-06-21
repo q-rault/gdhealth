@@ -56,6 +56,9 @@ pub struct GraphReport {
     pub edges: Vec<DependencyEdge>,
     pub cycles: Vec<Vec<String>>,
     pub parser_warnings: Vec<String>,
+    pub file_communities: Vec<GraphCommunity>,
+    pub file_graph_metrics: Option<GraphAggregateMetrics>,
+    pub entity_scan: Option<EntityScanReport>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,11 +80,15 @@ pub struct FileMetric {
     pub file: String,
     pub line_count: usize,
     pub function_count: usize,
+    pub number_of_methods: usize,
     pub signal_count: usize,
     pub public_function_count: usize,
     pub outgoing_dependency_count: usize,
     pub incoming_dependency_count: usize,
     pub cycle_count: usize,
+    pub ws_complexity: usize,
+    pub tfidf: f64,
+    pub louvain_modularity: usize,
     pub file_hotspot_score: usize,
 }
 
@@ -92,6 +99,67 @@ pub struct MetricsReport {
     pub root: String,
     pub files: Vec<FileMetric>,
     pub functions: Vec<FunctionMetric>,
+    pub entities: Vec<EntityMetric>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphCommunity {
+    pub id: String,
+    pub community_id: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphAggregateMetrics {
+    pub louvain_modularity: f64,
+    pub community_count: usize,
+    pub total_sloc: usize,
+    pub group_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EntityNode {
+    pub id: String,
+    pub display_name: String,
+    pub file: String,
+    pub class_name: Option<String>,
+    pub extends: Option<String>,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub line_count: usize,
+    pub method_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EntityEdge {
+    pub from: String,
+    pub to: String,
+    pub kind: DependencyKind,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EntityScanReport {
+    pub entities: Vec<EntityNode>,
+    pub dependency_edges: Vec<EntityEdge>,
+    pub inheritance_edges: Vec<EntityEdge>,
+    pub complete_edges: Vec<EntityEdge>,
+    pub communities: Vec<GraphCommunity>,
+    pub complete_graph_metrics: GraphAggregateMetrics,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EntityMetric {
+    pub entity: String,
+    pub file: String,
+    pub line_count: usize,
+    pub method_count: usize,
+    pub ws_complexity: usize,
+    pub tfidf: f64,
+    pub incoming_dependency_count: usize,
+    pub outgoing_dependency_count: usize,
+    pub incoming_inheritance_count: usize,
+    pub outgoing_inheritance_count: usize,
+    pub louvain_modularity: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

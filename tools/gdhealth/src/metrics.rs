@@ -1,3 +1,6 @@
+use crate::analysis::{
+    analyze_file_graph, build_entity_metrics, build_entity_scan, compute_tfidf_scores,
+};
 use crate::cli::CommandOptions;
 use crate::config::Config;
 use crate::error::{GdHealthError, Result};
@@ -24,6 +27,13 @@ static CONTROL_FLOW_RE: LazyLock<Regex> = LazyLock::new(|| {
 pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<MetricsReport> {
     let graph = build_graph(config, options)?;
     let root = options.root.as_path();
+    let file_graph_analysis = analyze_file_graph(&graph);
+    let tfidf_scores = compute_tfidf_scores(root, &graph)?;
+    let community_by_file = file_graph_analysis
+        .communities
+        .iter()
+        .map(|item| (item.id.as_str(), item.community_id))
+        .collect::<BTreeMap<_, _>>();
 
     let incoming_counts = build_incoming_counts(&graph.edges);
     let cycle_memberships = build_cycle_memberships(&graph.cycles);
@@ -79,11 +89,16 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
             outgoing_dependency_count,
             cycle_count,
         );
+        let ws_complexity = file_function_metrics
+            .iter()
+            .map(|function| function.cyclomatic_estimate * (function.max_nesting_depth + 1))
+            .sum::<usize>();
 
         file_metrics.push(FileMetric {
             file: file.path.clone(),
             line_count: file.line_count,
             function_count: file_function_metrics.len(),
+            number_of_methods: file_function_metrics.len(),
             signal_count: analysis.signal_count,
             public_function_count: file_function_metrics
                 .iter()
@@ -92,6 +107,12 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
             outgoing_dependency_count,
             incoming_dependency_count,
             cycle_count,
+            ws_complexity,
+            tfidf: tfidf_scores.get(&file.path).copied().unwrap_or(0.0),
+            louvain_modularity: community_by_file
+                .get(file.path.as_str())
+                .copied()
+                .unwrap_or(0),
             file_hotspot_score,
         });
 
@@ -117,11 +138,15 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
             .then_with(|| left.function_name.cmp(&right.function_name))
     });
 
+    let entity_scan = build_entity_scan(root, &graph, &file_metrics)?;
+    let entity_metrics = build_entity_metrics(&entity_scan, &file_metrics);
+
     Ok(MetricsReport {
         metadata: OutputMetadata::default(),
         root: options.root.to_string_lossy().into_owned(),
         files: file_metrics,
         functions: function_metrics,
+        entities: entity_metrics,
     })
 }
 
@@ -180,13 +205,13 @@ fn compute_file_hotspot_score(
 }
 
 #[derive(Debug)]
-struct FileAnalysis {
+pub(crate) struct FileAnalysis {
     signal_count: usize,
-    functions: Vec<FunctionAnalysis>,
+    pub(crate) functions: Vec<FunctionAnalysis>,
 }
 
 #[derive(Debug)]
-struct FunctionAnalysis {
+pub(crate) struct FunctionAnalysis {
     function_name: String,
     start_line: usize,
     end_line: usize,
@@ -197,7 +222,7 @@ struct FunctionAnalysis {
     parameter_count: usize,
 }
 
-fn analyze_file(_path: &str, content: &str) -> FileAnalysis {
+pub(crate) fn analyze_file(_path: &str, content: &str) -> FileAnalysis {
     let lines = content.lines().collect::<Vec<_>>();
     let signal_count = lines
         .iter()
