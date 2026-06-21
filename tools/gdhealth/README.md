@@ -1,17 +1,18 @@
 # gdhealth CLI
 
-`gdhealth` is the implementation package for the repository PoC.
+`gdhealth` is the Rust implementation package for the repository PoC. It analyzes Godot GDScript repositories and exposes `graph`, `metrics`, `policy`, and `health` commands over the same discovery pipeline.
 
 ## Current Status
 
-This crate currently provides the Step 1 bootstrap from the implementation plan:
+The crate now covers Steps 1 through 4 of the implementation plan:
 
-- CLI entrypoint with `graph`, `metrics`, `policy`, and `health` subcommands
 - config loading from `gdhealth.toml`
-- `.gd` file discovery with include/exclude filtering
-- text, JSON, and DOT output plumbing
-
-The current graph and reporting logic is intentionally minimal. Dependency extraction, metrics enrichment, policy evaluation, and aggregate health logic will be expanded in later steps without changing the command surface.
+- `.gd` discovery with include/exclude filtering
+- deterministic graph extraction for `extends`, `class_name`, `preload(...)`, and string-literal `load(...)`
+- cycle detection and parser warnings
+- function and file metrics, including hotspot scoring
+- policy evaluation for forbidden dependencies, size thresholds, complexity thresholds, and cycles
+- `--fail-on <info|warning|critical>` enforcement for `policy` and `health`
 
 ## Example Commands
 
@@ -19,26 +20,28 @@ The current graph and reporting logic is intentionally minimal. Dependency extra
 cargo run --manifest-path tools/gdhealth/Cargo.toml -- graph --root . --format text
 cargo run --manifest-path tools/gdhealth/Cargo.toml -- graph --root . --format json --output reports/code-health/graph.json
 cargo run --manifest-path tools/gdhealth/Cargo.toml -- metrics --root . --format text
+cargo run --manifest-path tools/gdhealth/Cargo.toml -- policy --root . --format text --fail-on critical
 cargo run --manifest-path tools/gdhealth/Cargo.toml -- health --root . --config gdhealth.toml --format json --output reports/code-health/health.json
 ```
 
 ## Supported Today
 
-- discovery of `.gd` files under a repo root
-- deterministic file ordering
-- optional exclusion of `test/**`
-- config defaults when `gdhealth.toml` is absent
-
-## Planned Next
-
-- tolerant dependency extraction from `extends`, `preload`, and `load`
-- function and file metrics based on GDScript structure
-- policy checks for forbidden dependencies and thresholds
-- richer summary output under `reports/code-health/`
+- deterministic `.gd` discovery under a repo root
+- dependency extraction for:
+  - `extends "res://..."`
+  - `extends SomeClassName`
+  - `class_name`
+  - `preload("...")`
+  - string-literal `load("...")`
+- repo-owned `.gd` path resolution from `res://` and relative paths
+- file-level and function-level metrics
+- config-driven policy findings with severity
+- non-zero exit behavior through `--fail-on`
 
 ## Known Limitations
 
-- no semantic analysis
-- no real dependency edges yet
-- no function-level parsing yet
-- no policy findings yet
+- no semantic parser; extraction is tolerant and text-based
+- dynamic `load(variable)` calls are not resolved
+- only `.gd` dependencies become graph edges
+- duplicate `class_name` declarations surface as warnings rather than being disambiguated
+- `health` output bundling under `reports/code-health/` is still the next step
