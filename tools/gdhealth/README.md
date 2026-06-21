@@ -13,6 +13,7 @@ The crate now covers Steps 1 through 4 of the implementation plan:
 - function and file metrics, including hotspot scoring
 - policy evaluation for forbidden dependencies, size thresholds, complexity thresholds, and cycles
 - `--fail-on <info|warning|critical>` enforcement for `policy` and `health`
+- default `health` report bundling under `<root>/reports/code-health/`
 
 ## Example Commands
 
@@ -22,6 +23,7 @@ cargo run --manifest-path tools/gdhealth/Cargo.toml -- graph --root . --format j
 cargo run --manifest-path tools/gdhealth/Cargo.toml -- metrics --root . --format text
 cargo run --manifest-path tools/gdhealth/Cargo.toml -- policy --root . --format text --fail-on critical
 cargo run --manifest-path tools/gdhealth/Cargo.toml -- health --root . --config gdhealth.toml --format json --output reports/code-health/health.json
+cargo run --manifest-path tools/gdhealth/Cargo.toml -- health --root .
 ```
 
 ## Supported Today
@@ -37,6 +39,13 @@ cargo run --manifest-path tools/gdhealth/Cargo.toml -- health --root . --config 
 - file-level and function-level metrics
 - config-driven policy findings with severity
 - non-zero exit behavior through `--fail-on`
+- default `health` bundle output:
+  - `graph.json`
+  - `graph.dot`
+  - `metrics.json`
+  - `policy.json`
+  - `health.json`
+  - `summary.txt`
 
 ## Known Limitations
 
@@ -44,4 +53,4 @@ cargo run --manifest-path tools/gdhealth/Cargo.toml -- health --root . --config 
 - dynamic `load(variable)` calls are not resolved
 - only `.gd` dependencies become graph edges
 - duplicate `class_name` declarations surface as warnings rather than being disambiguated
-- `health` output bundling under `reports/code-health/` is still the next step
+- `health --output <file>` switches back to single-file output instead of bundle generation

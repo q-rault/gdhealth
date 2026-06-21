@@ -24,6 +24,8 @@ pub enum GdHealthError {
     InvalidGlob { pattern: String, message: String },
     #[error("invalid severity `{severity}`")]
     InvalidSeverity { severity: String },
+    #[error("invalid config: {message}")]
+    InvalidConfig { message: String },
     #[error("unsupported format: {0}")]
     UnsupportedFormat(String),
     #[error("policy threshold triggered: {message}")]

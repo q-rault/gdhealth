@@ -61,19 +61,29 @@ pub fn run() -> Result<()> {
             policy::enforce_fail_on(&report.findings, options.fail_on.as_deref())
         }
         Command::Health(options) => {
-            let report = health::build_health_report(&config, &options)?;
-            let rendered = match options.format {
-                OutputFormat::Json => output::json::render(&report)?,
-                OutputFormat::Dot => {
-                    return Err(crate::error::GdHealthError::UnsupportedFormat(
-                        "health does not support dot output".to_string(),
-                    ));
-                }
-                OutputFormat::Text => output::text::render_health(&report),
-            };
+            let artifacts = health::build_health_artifacts(&config, &options)?;
 
-            fs::emit_output(options.output.as_deref(), &rendered)?;
-            policy::enforce_fail_on(&report.policy_findings, options.fail_on.as_deref())
+            if let Some(output_path) = options.output.as_deref() {
+                let rendered = match options.format {
+                    OutputFormat::Json => output::json::render(&artifacts.health)?,
+                    OutputFormat::Dot => {
+                        return Err(crate::error::GdHealthError::UnsupportedFormat(
+                            "health does not support dot output".to_string(),
+                        ));
+                    }
+                    OutputFormat::Text => output::text::render_health(&artifacts.health),
+                };
+
+                fs::emit_output(Some(output_path), &rendered)?;
+            } else {
+                let bundle_dir = health::default_bundle_dir(&options.root);
+                health::emit_report_bundle(&bundle_dir, &artifacts)?;
+            }
+
+            policy::enforce_fail_on(
+                &artifacts.health.policy_findings,
+                options.fail_on.as_deref(),
+            )
         }
     }
 }

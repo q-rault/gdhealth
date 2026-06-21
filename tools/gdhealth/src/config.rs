@@ -1,4 +1,5 @@
 use crate::error::{GdHealthError, Result};
+use globset::Glob;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -33,7 +34,47 @@ impl Config {
             source,
         })?;
 
-        Ok(toml::from_str(&content)?)
+        let config: Self = toml::from_str(&content)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_globs("discovery.include", &self.discovery.include)?;
+        validate_globs("discovery.exclude", &self.discovery.exclude)?;
+
+        for (group_name, patterns) in &self.groups {
+            validate_globs(&format!("groups.{group_name}"), patterns)?;
+        }
+
+        validate_globs("policy.allow_cycles", &self.policy.allow_cycles)?;
+
+        for rule in &self.policy.forbidden_dependencies {
+            validate_severity(&rule.severity)?;
+        }
+
+        validate_threshold_pair(
+            "thresholds.file_lines",
+            self.thresholds.file_lines_warn,
+            self.thresholds.file_lines_critical,
+        )?;
+        validate_threshold_pair(
+            "thresholds.function_lines",
+            self.thresholds.function_lines_warn,
+            self.thresholds.function_lines_critical,
+        )?;
+        validate_threshold_pair(
+            "thresholds.cyclomatic",
+            self.thresholds.cyclomatic_warn,
+            self.thresholds.cyclomatic_critical,
+        )?;
+        validate_threshold_pair(
+            "thresholds.nesting",
+            self.thresholds.nesting_warn,
+            self.thresholds.nesting_critical,
+        )?;
+
+        Ok(())
     }
 }
 
@@ -210,4 +251,77 @@ fn critical_nesting() -> usize {
 
 fn warn_parameters() -> usize {
     5
+}
+
+fn validate_globs(field: &str, patterns: &[String]) -> Result<()> {
+    for pattern in patterns {
+        let raw_pattern = pattern.strip_prefix('!').unwrap_or(pattern.as_str());
+        Glob::new(raw_pattern).map_err(|error| GdHealthError::InvalidGlob {
+            pattern: format!("{field}: {pattern}"),
+            message: error.to_string(),
+        })?;
+    }
+
+    Ok(())
+}
+
+fn validate_severity(severity: &str) -> Result<()> {
+    match severity.trim().to_ascii_lowercase().as_str() {
+        "info" | "warning" | "warn" | "critical" => Ok(()),
+        other => Err(GdHealthError::InvalidSeverity {
+            severity: other.to_string(),
+        }),
+    }
+}
+
+fn validate_threshold_pair(name: &str, warn: usize, critical: usize) -> Result<()> {
+    if warn > critical {
+        return Err(GdHealthError::InvalidConfig {
+            message: format!("{name} warn threshold {warn} exceeds critical threshold {critical}"),
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Config, ForbiddenDependencyRule};
+    use crate::error::GdHealthError;
+
+    #[test]
+    fn rejects_invalid_forbidden_dependency_severity() {
+        let mut config = Config::default();
+        config.policy.forbidden_dependencies = vec![ForbiddenDependencyRule {
+            from: "server".to_string(),
+            to: "hud".to_string(),
+            severity: "severe".to_string(),
+        }];
+
+        let error = config.validate().expect_err("invalid severity should fail");
+        assert!(matches!(error, GdHealthError::InvalidSeverity { .. }));
+    }
+
+    #[test]
+    fn rejects_invalid_group_glob() {
+        let mut config = Config::default();
+        config
+            .groups
+            .insert("broken".to_string(), vec!["[".to_string()]);
+
+        let error = config.validate().expect_err("invalid glob should fail");
+        assert!(matches!(error, GdHealthError::InvalidGlob { .. }));
+    }
+
+    #[test]
+    fn rejects_inverted_thresholds() {
+        let mut config = Config::default();
+        config.thresholds.cyclomatic_warn = 20;
+        config.thresholds.cyclomatic_critical = 10;
+
+        let error = config
+            .validate()
+            .expect_err("inverted thresholds should fail");
+        assert!(matches!(error, GdHealthError::InvalidConfig { .. }));
+    }
 }
