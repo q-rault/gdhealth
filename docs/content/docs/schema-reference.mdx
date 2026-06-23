@@ -1,0 +1,174 @@
+---
+title: Schema Reference
+description: JSON output schemas for graph, metrics, policy, and health reports.
+---
+
+All JSON outputs share a common metadata header and are treated as a stable public API. The `schema_version` field is `1` and will increment on breaking changes.
+
+```json
+{
+  "tool_name": "gdhealth",
+  "tool_version": "0.1.0",
+  "schema_version": 1,
+  ...
+}
+```
+
+---
+
+## `graph.json`
+
+Produced by `gdhealth graph --format json` and `gdhealth health` (bundle).
+
+```
+{
+  tool_name: string
+  tool_version: string
+  schema_version: 1
+  root: string
+  file_count: number
+  files: ProjectFile[]
+  edges: DependencyEdge[]
+  cycles: string[][]         // each inner array is one cycle (list of file paths)
+  parser_warnings: string[]
+  file_communities: GraphCommunity[]
+  file_graph_metrics: GraphAggregateMetrics | null
+  entity_scan: EntityScanReport | null
+}
+```
+
+**`ProjectFile`**
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Unique identifier (same as path) |
+| `path` | string | Project-relative file path |
+| `group` | string \| null | Group name from config, or null if ungrouped |
+| `line_count` | number | Total lines in file |
+
+**`DependencyEdge`**
+
+| Field | Type | Description |
+|---|---|---|
+| `from` | string | Source file path |
+| `to` | string | Target file path |
+| `kind` | string | `Extends`, `Preload`, `Load`, `ConstPreload`, `UnknownScriptReference` |
+| `line` | number | Line number in source file |
+
+---
+
+## `metrics.json`
+
+Produced by `gdhealth metrics --format json` and `gdhealth health` (bundle).
+
+```
+{
+  tool_name: string
+  tool_version: string
+  schema_version: 1
+  root: string
+  files: FileMetric[]
+  functions: FunctionMetric[]
+  entities: EntityMetric[]
+}
+```
+
+**`FileMetric`**
+
+| Field | Type | Description |
+|---|---|---|
+| `file` | string | Project-relative file path |
+| `line_count` | number | Total lines |
+| `function_count` | number | Total functions/methods |
+| `number_of_methods` | number | Alias for function_count (method context) |
+| `signal_count` | number | Number of `signal` declarations |
+| `public_function_count` | number | Functions without leading `_` |
+| `outgoing_dependency_count` | number | Fan-out: files this file depends on |
+| `incoming_dependency_count` | number | Fan-in: files that depend on this file |
+| `cycle_count` | number | Number of cycles this file participates in |
+| `ws_complexity` | number | Weighted sum complexity across all functions |
+| `tfidf` | number | TF-IDF score (vocabulary uniqueness) |
+| `louvain_modularity` | number | Community cluster ID (Louvain algorithm) |
+| `file_hotspot_score` | number | Composite hotspot ranking score |
+
+**`FunctionMetric`**
+
+| Field | Type | Description |
+|---|---|---|
+| `file` | string | File containing this function |
+| `function_name` | string | Function identifier |
+| `start_line` | number | First line of the function |
+| `end_line` | number | Last line of the function |
+| `line_count` | number | Function length |
+| `branch_count` | number | Raw control-flow keyword count |
+| `cyclomatic_estimate` | number | Estimated cyclomatic complexity |
+| `max_nesting_depth` | number | Maximum indentation depth |
+| `parameter_count` | number | Number of parameters |
+| `hotspot_score` | number | `cyclomatic × nesting × params × lines` |
+
+---
+
+## `policy.json`
+
+Produced by `gdhealth policy --format json` and `gdhealth health` (bundle).
+
+```
+{
+  tool_name: string
+  tool_version: string
+  schema_version: 1
+  root: string
+  findings: PolicyFinding[]
+}
+```
+
+**`PolicyFinding`**
+
+| Field | Type | Description |
+|---|---|---|
+| `rule_id` | string | See rule IDs in [Interpreting Reports](/docs/interpreting-reports) |
+| `severity` | string | `info`, `warning`, or `critical` |
+| `message` | string | Human-readable description of the finding |
+| `file` | string \| null | Primary file involved, if applicable |
+| `line` | number \| null | Line number in the file, if applicable |
+| `related_files` | string[] | All files involved (e.g. both ends of a forbidden dependency) |
+
+Findings are sorted: critical first, then by file path, then by line.
+
+---
+
+## `health.json`
+
+Produced by `gdhealth health`. The primary integration surface for gdsuite and automation.
+
+```
+{
+  tool_name: string
+  tool_version: string
+  schema_version: 1
+  summary: HealthSummary
+  top_files: FileMetric[]      // top 10 by hotspot score
+  top_functions: FunctionMetric[]  // top 10 by hotspot score
+  cycles: string[][]
+  policy_findings: PolicyFinding[]
+  cross_group_dependencies: string[]  // human-readable edge descriptions
+}
+```
+
+**`HealthSummary`**
+
+| Field | Type | Description |
+|---|---|---|
+| `file_count` | number | Total files discovered |
+| `edge_count` | number | Total dependency edges |
+| `policy_finding_count` | number | Total findings (all severities) |
+
+---
+
+## Stability guarantees
+
+All fields listed above are **stable** as of schema version 1. They will not be removed or renamed without a schema version bump.
+
+Fields inside `entity_scan` and `file_graph_metrics` in `graph.json` are available but not yet committed to as a stable API surface — treat them as internal/experimental.
+
+To detect schema changes in your automation, check `schema_version` at the top of each JSON file.

@@ -1,0 +1,303 @@
+---
+title: Real-world Example
+description: gdhealth run on GDQuest's godot-open-rpg — a real Godot 4.6 open-source RPG.
+---
+
+This page shows a full gdhealth run on [**godot-open-rpg**](https://github.com/gdquest-demos/godot-open-rpg), a real open-source RPG tutorial project by [GDQuest](https://www.gdquest.com/) targeting Godot 4.6.2.
+
+The project has **78 GDScript files**, **5 341 SLOC**, across 4 logical layers (combat, field, common, overworld).
+
+```sh
+git clone https://github.com/gdquest-demos/godot-open-rpg
+cd godot-open-rpg
+# add gdhealth.toml (see Configuration tab below)
+gdhealth health --root .
+```
+
+## Results
+
+<Tabs items={['summary.txt', 'policy.json', 'health.json', 'graph', 'Configuration']}>
+
+<Tab value="summary.txt">
+
+```text
+root: godot-open-rpg
+files: 78
+edges: 36
+cycles: 0
+cross-group dependencies: 19
+policy findings: 11
+parser warnings: 0
+top files:
+- src/field/gamepieces/controllers/player_controller.gd (hotspot: 131, lines: 222, funcs: 12, incoming: 0, outgoing: 0, cycles: 0)
+- src/field/gameboard/gameboard.gd (hotspot: 88, lines: 195, funcs: 13, incoming: 0, outgoing: 0, cycles: 0)
+- src/field/gameboard/pathfinder.gd (hotspot: 88, lines: 121, funcs: 8, incoming: 0, outgoing: 0, cycles: 0)
+- src/combat/ui/cursors/ui_battler_target_cursor.gd (hotspot: 81, lines: 161, funcs: 4, incoming: 0, outgoing: 3, cycles: 0)
+- src/field/cutscenes/interaction.gd (hotspot: 79, lines: 133, funcs: 8, incoming: 3, outgoing: 0, cycles: 0)
+- src/field/gamepieces/controllers/path_loop_ai_controller.gd (hotspot: 74, lines: 218, funcs: 9, incoming: 0, outgoing: 1, cycles: 0)
+- overworld/maps/house/wand_pedestal_interaction.gd (hotspot: 68, lines: 132, funcs: 5, incoming: 0, outgoing: 0, cycles: 0)
+- src/combat/combat.gd (hotspot: 66, lines: 245, funcs: 10, incoming: 0, outgoing: 0, cycles: 0)
+- src/field/cutscenes/trigger.gd (hotspot: 65, lines: 107, funcs: 6, incoming: 2, outgoing: 0, cycles: 0)
+- src/field/gamepieces/gamepiece_registry.gd (hotspot: 63, lines: 107, funcs: 9, incoming: 0, outgoing: 0, cycles: 0)
+top functions:
+- src/field/gamepieces/controllers/player_controller.gd::_unhandled_input (hotspot: 47, lines: 23, cyclomatic: 14, nesting: 2, params: 1)
+- src/combat/ui/cursors/ui_battler_target_cursor.gd::_unhandled_input (hotspot: 47, lines: 37, cyclomatic: 13, nesting: 3, params: 1)
+- src/field/gameboard/pathfinder.gd::get_path_to_cell (hotspot: 38, lines: 41, cyclomatic: 10, nesting: 3, params: 0)
+- src/combat/ui/action_menu/ui_action_menu.gd::setup (hotspot: 31, lines: 55, cyclomatic: 7, nesting: 3, params: 1)
+- src/combat/actions/battler_action.gd::execute (hotspot: 29, lines: 33, cyclomatic: 8, nesting: 2, params: 0)
+- src/field/gameboard/gameboard_layer.gd::_update_cells (hotspot: 29, lines: 20, cyclomatic: 7, nesting: 3, params: 2)
+- src/field/gamepieces/controllers/player_controller.gd::_on_interaction_selected (hotspot: 28, lines: 28, cyclomatic: 7, nesting: 3, params: 1)
+- src/combat/combat_ai_random.gd::select_action (hotspot: 26, lines: 33, cyclomatic: 6, nesting: 3, params: 1)
+- src/combat/ui/cursors/ui_battler_target_cursor.gd::_find_closest_target (hotspot: 24, lines: 30, cyclomatic: 6, nesting: 2, params: 1)
+- src/field/gameboard/gameboard.gd::_connect_new_pathfinder_cells (hotspot: 24, lines: 18, cyclomatic: 5, nesting: 4, params: 1)
+cycles: none
+policy findings:
+- [warning] function_lines_threshold: src/combat/actions/battler_action_attack.gd::execute spans 42 lines (warn 40, critical 80)
+- [warning] function_lines_threshold: src/combat/combat.gd::setup spans 40 lines (warn 40, critical 80)
+- [warning] function_lines_threshold: src/combat/combat.gd::_select_next_player_action spans 44 lines (warn 40, critical 80)
+- [warning] function_lines_threshold: src/combat/ui/action_menu/ui_action_menu.gd::setup spans 55 lines (warn 40, critical 80)
+- [warning] cyclomatic_threshold: src/combat/ui/cursors/ui_battler_target_cursor.gd::_unhandled_input has cyclomatic estimate 13 (warn 10, critical 15)
+- [warning] function_lines_threshold: src/field/cutscenes/templates/area_transitions/area_transition.gd::_on_area_entered spans 40 lines
+- [warning] function_lines_threshold: src/field/field_camera.gd::_on_viewport_resized spans 47 lines (warn 40, critical 80)
+- [warning] nesting_threshold: src/field/gameboard/gameboard.gd::_connect_new_pathfinder_cells has nesting depth 4 (warn 4, critical 6)
+- [warning] cyclomatic_threshold: src/field/gameboard/pathfinder.gd::get_path_to_cell has cyclomatic estimate 10 (warn 10, critical 15)
+- [warning] function_lines_threshold: src/field/gameboard/pathfinder.gd::get_path_to_cell spans 41 lines (warn 40, critical 80)
+- [warning] cyclomatic_threshold: src/field/gamepieces/controllers/player_controller.gd::_unhandled_input has cyclomatic estimate 14 (warn 10, critical 15)
+```
+
+</Tab>
+
+<Tab value="policy.json">
+
+```json
+{
+  "tool_name": "gdhealth",
+  "tool_version": "0.1.0",
+  "schema_version": 1,
+  "root": "godot-open-rpg",
+  "findings": [
+    {
+      "rule_id": "cyclomatic_threshold",
+      "severity": "warning",
+      "message": "src/field/gamepieces/controllers/player_controller.gd::_unhandled_input has cyclomatic estimate 14 (warn 10, critical 15)",
+      "file": "src/field/gamepieces/controllers/player_controller.gd",
+      "line": 72,
+      "related_files": ["src/field/gamepieces/controllers/player_controller.gd"]
+    },
+    {
+      "rule_id": "cyclomatic_threshold",
+      "severity": "warning",
+      "message": "src/combat/ui/cursors/ui_battler_target_cursor.gd::_unhandled_input has cyclomatic estimate 13 (warn 10, critical 15)",
+      "file": "src/combat/ui/cursors/ui_battler_target_cursor.gd",
+      "line": 84,
+      "related_files": ["src/combat/ui/cursors/ui_battler_target_cursor.gd"]
+    },
+    {
+      "rule_id": "function_lines_threshold",
+      "severity": "warning",
+      "message": "src/combat/ui/action_menu/ui_action_menu.gd::setup spans 55 lines (warn 40, critical 80)",
+      "file": "src/combat/ui/action_menu/ui_action_menu.gd",
+      "line": 36,
+      "related_files": ["src/combat/ui/action_menu/ui_action_menu.gd"]
+    },
+    {
+      "rule_id": "nesting_threshold",
+      "severity": "warning",
+      "message": "src/field/gameboard/gameboard.gd::_connect_new_pathfinder_cells has nesting depth 4 (warn 4, critical 6)",
+      "file": "src/field/gameboard/gameboard.gd",
+      "line": 165,
+      "related_files": ["src/field/gameboard/gameboard.gd"]
+    },
+    {
+      "rule_id": "cyclomatic_threshold",
+      "severity": "warning",
+      "message": "src/field/gameboard/pathfinder.gd::get_path_to_cell has cyclomatic estimate 10 (warn 10, critical 15)",
+      "file": "src/field/gameboard/pathfinder.gd",
+      "line": 55,
+      "related_files": ["src/field/gameboard/pathfinder.gd"]
+    }
+  ]
+}
+```
+
+</Tab>
+
+<Tab value="health.json">
+
+```json
+{
+  "tool_name": "gdhealth",
+  "tool_version": "0.1.0",
+  "schema_version": 1,
+  "summary": {
+    "file_count": 78,
+    "edge_count": 36,
+    "policy_finding_count": 11
+  },
+  "top_files": [
+    {
+      "file": "src/field/gamepieces/controllers/player_controller.gd",
+      "line_count": 222,
+      "function_count": 12,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 122,
+      "file_hotspot_score": 131
+    },
+    {
+      "file": "src/field/gameboard/gameboard.gd",
+      "line_count": 195,
+      "function_count": 13,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 100,
+      "file_hotspot_score": 88
+    }
+  ],
+  "top_functions": [
+    {
+      "file": "src/field/gamepieces/controllers/player_controller.gd",
+      "function_name": "_unhandled_input",
+      "line_count": 23,
+      "cyclomatic_estimate": 14,
+      "max_nesting_depth": 2,
+      "parameter_count": 1,
+      "hotspot_score": 47
+    },
+    {
+      "file": "src/combat/ui/cursors/ui_battler_target_cursor.gd",
+      "function_name": "_unhandled_input",
+      "line_count": 37,
+      "cyclomatic_estimate": 13,
+      "max_nesting_depth": 3,
+      "parameter_count": 1,
+      "hotspot_score": 47
+    }
+  ],
+  "cycles": [],
+  "policy_findings": ["... 11 warning findings ..."],
+  "cross_group_dependencies": [
+    "src/combat/ui/battler_entry/ui_energy_bar.gd -> src/combat/ui/battler_entry/ui_energy_point.tscn (combat -> ungrouped)",
+    "src/combat/ui/cursors/ui_battler_target_cursor.gd -> src/combat/ui/cursors/ui_menu_cursor.tscn (combat -> ungrouped)",
+    "src/common/inventory.gd -> assets/items/bomb.atlastex (common -> ungrouped)"
+  ]
+}
+```
+
+</Tab>
+
+<Tab value="graph">
+
+```
+graph --format text
+
+root: godot-open-rpg
+files: 78 | edges: 36 | cycles: 0
+
+dependency edges (sample):
+  overworld/maps/forest/game_end_trigger.gd
+    → src/field/cutscenes/trigger.gd  (Extends)
+  overworld/maps/town/conversation_encounter.gd
+    → src/field/cutscenes/interaction.gd  (Extends)
+  overworld/maps/town/fan_interaction.gd
+    → src/field/cutscenes/templates/conversations/conversation_template.gd  (Extends)
+  src/combat/ui/cursors/ui_battler_target_cursor.gd
+    → src/combat/battlers/battler.gd  (Preload)
+    → src/combat/ui/action_menu/ui_action_menu.gd  (Preload)
+  src/field/gamepieces/controllers/path_loop_ai_controller.gd
+    → src/field/gamepieces/gamepiece.gd  (Preload)
+  src/common/inventory.gd
+    → assets/items/bomb.atlastex  (Load)
+```
+
+```sh
+# GraphViz export
+gdhealth graph --root . --format dot --output graph.dot
+dot -Tsvg graph.dot -o graph.svg
+```
+
+</Tab>
+
+<Tab value="Configuration">
+
+```toml
+[discovery]
+include = ["**/*.gd"]
+exclude = ["addons/**", ".godot/**", "reports/**"]
+
+[groups]
+combat    = ["src/combat/**"]
+field     = ["src/field/**"]
+common    = ["src/common/**"]
+overworld = ["overworld/**"]
+
+[thresholds]
+file_lines_warn     = 300
+file_lines_critical = 600
+function_lines_warn     = 40
+function_lines_critical = 80
+cyclomatic_warn     = 8
+cyclomatic_critical = 14
+nesting_warn     = 4
+nesting_critical = 6
+parameters_warn  = 5
+
+[policy]
+allow_cycles = []
+
+[[policy.forbidden_dependencies]]
+from     = "combat"
+to       = "field"
+severity = "warning"
+
+[[policy.forbidden_dependencies]]
+from     = "overworld"
+to       = "combat"
+severity = "warning"
+```
+
+</Tab>
+
+</Tabs>
+
+## Browser viewer (`emerge-html`)
+
+Run to generate the interactive graph:
+
+```sh
+gdhealth graph --root . --format emerge-html
+open reports/code-health/browser/emerge.html
+```
+
+**File dependencies — community coloring.** Each color is a Louvain cluster. The 61 clusters and sparse edges reflect GDQuest's deliberately loosely coupled tutorial architecture:
+
+![File dependency graph, community coloring](/showcase/emerge-community.png)
+
+**Hotspot coloring.** Green = low complexity, amber/red = high hotspot score. The few warm nodes — `player_controller.gd`, `pathfinder.gd`, `ui_battler_target_cursor.gd` — are exactly the files handling the most input branching and pathfinding logic:
+
+![File dependency graph, hotspot coloring](/showcase/emerge-hotspot.png)
+
+**Entity dependencies graph.** Switching to entity-level view shows only 4 cross-entity edges, confirming the codebase uses composition over inheritance:
+
+![Entity dependency graph](/showcase/emerge-entity-deps.png)
+
+**Node click — `treasure_chest_interaction.gd`.** The SELECTION panel shows per-file metrics inline: 36 lines, fan-in 0, fan-out 1, 1 function, complexity 3, hotspot 17:
+
+![Node selected in the graph](/showcase/emerge-node-click.png)
+
+## What the results tell us
+
+This is a well-structured tutorial codebase. The key signals:
+
+| Signal | Value | Interpretation |
+|---|---|---|
+| Cycles | 0 | Clean dependency graph, no circular coupling |
+| Critical findings | 0 | No severe threshold violations |
+| Warning findings | 11 | All in combat input handlers and pathfinding — expected complexity |
+| Communities | 61 out of 78 files | Extremely loose coupling; most files stand alone |
+| Top hotspot | `player_controller.gd` (131) | Input handling is the most complex concern, reasonable for a game |
+| Top function | `_unhandled_input` (cyclomatic 14) | Input branching concentrated in one function — refactor candidate |
+
+Running `gdhealth health --root . --fail-on critical` on this project exits **0** — it passes CI out of the box.

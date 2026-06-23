@@ -1,0 +1,53 @@
+---
+title: gdsuite Integration
+description: How gdsuite health uses gdhealth as its backend and what the integration contract covers.
+---
+
+`gdhealth` is the code-health backend for the [gdsuite](https://github.com/q-rault/gdsuite) platform. This page defines the integration contract between the two tools.
+
+## What gdsuite health invokes
+
+```sh
+gdhealth health --root <project_root> [--fail-on critical]
+```
+
+`gdhealth health` is the canonical backend command. It produces the full report bundle in a single invocation and exposes the right exit-code semantics for CI.
+
+## What gdsuite consumes
+
+gdsuite reads three artifacts from `gdhealth health`:
+
+| Artifact | Use |
+|---|---|
+| Exit code | Pass/fail signal for the gdsuite health check |
+| `reports/code-health/summary.txt` | Human-readable display in the gdsuite output |
+| `reports/code-health/health.json` | Machine-readable data for aggregation and dashboards |
+
+gdsuite does **not** parse `graph.json`, `metrics.json`, or `policy.json` directly. `health.json` is the integration surface.
+
+## What stays gdhealth-specific
+
+The following features are available directly via `gdhealth` but are not part of the gdsuite integration contract:
+
+- `gdhealth graph --format emerge-html` — interactive browser viewer
+- `gdhealth graph --format dot` — GraphViz export
+- `gdhealth graph --format emerge-json` — raw browser payload
+- `gdhealth metrics` — standalone metrics command
+- `gdhealth policy` — standalone policy command
+
+These are advanced workflows for users who want to go deeper than the `health` summary provides.
+
+## Stability guarantees for integration
+
+- The `health.json` schema is stable at version 1. Breaking changes will increment `schema_version`.
+- The bundle output path (`reports/code-health/`) is stable.
+- The `summary`, `top_files`, `top_functions`, `cycles`, `policy_findings`, and `cross_group_dependencies` fields in `health.json` are all stable.
+- Exit codes 0 and 1 are stable and have the semantics described in [CLI Reference](/docs/cli-reference).
+
+## Upgrading
+
+When gdhealth releases a new schema version:
+
+- The old schema version will be documented in this page alongside the new one
+- gdsuite will pin to a minimum compatible gdhealth version
+- The `schema_version` field at the top of each JSON file allows consumers to detect and handle version differences

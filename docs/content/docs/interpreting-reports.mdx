@@ -1,0 +1,140 @@
+---
+title: Interpreting Reports
+description: What each metric and finding means, and when to act on it.
+---
+
+## summary.txt
+
+The text summary is the fastest way to get a health overview:
+
+```text
+root: C:/Projects/my-game
+files: 126
+edges: 142
+cycles: 1
+cross-group dependencies: 79
+policy findings: 91
+parser warnings: 22
+top files:
+- player.gd (hotspot: 204, lines: 717, funcs: 36, incoming: 0, outgoing: 1, cycles: 0)
+- ai/mob_ai_controller.gd (hotspot: 169, lines: 568, funcs: 33, incoming: 8, outgoing: 0, cycles: 0)
+top functions:
+- terrain_grid.gd::_cast_light (hotspot: 72, lines: 90, cyclomatic: 19, nesting: 4, params: 0)
+cycles:
+- net/network_replay_artifact.gd
+policy findings:
+- [critical] function_lines_threshold: terrain_grid.gd::_cast_light spans 90 lines (warn 40, critical 80)
+```
+
+---
+
+## Metrics explained
+
+### Fan-in and fan-out
+
+- **fan-in** (`incoming_dependency_count`): how many other files depend on this file. High fan-in = high impact if you change this file.
+- **fan-out** (`outgoing_dependency_count`): how many files this file depends on. High fan-out = unstable base (the file will break when any of its dependencies change).
+
+Files with both high fan-in and high fan-out are the most costly to refactor.
+
+### Hotspot score
+
+The **file hotspot score** is a composite of function complexity totals, fan-in/fan-out pressure, and cycle membership. It is not a defect count — it is a relative ranking. Files at the top of the hotspot list are your highest-leverage refactor targets.
+
+The **function hotspot score** is computed as `cyclomatic × nesting × params × lines`. It identifies specific functions that are simultaneously complex, deeply nested, parameter-heavy, and long.
+
+### Cyclomatic complexity
+
+An estimate of decision-point count within a function, based on counting `if`, `elif`, `else`, `for`, `while`, and `match` keywords. Higher values mean more test paths and higher cognitive load.
+
+### Nesting depth
+
+The maximum indentation depth reached inside a function, measured in logical levels. Deep nesting makes control flow hard to follow and is a leading indicator of code that needs decomposition.
+
+### Weighted sum complexity (ws_complexity)
+
+A file-level metric that sums `cyclomatic_estimate × (max_nesting_depth + 1)` across all functions. Used in the hotspot score calculation.
+
+### TF-IDF
+
+Term frequency–inverse document frequency, computed over function names across the codebase. High TF-IDF means the file uses distinctive vocabulary — often utility files that are hard to share or reuse across contexts.
+
+---
+
+## Cycles
+
+A cycle is a set of files that mutually depend on each other in a loop. Cycles make it impossible to load one file independently of the others, which complicates testing and extraction.
+
+In summary.txt, cycles list the files involved:
+
+```text
+cycles:
+- net/network_replay_artifact.gd
+```
+
+In `health.json`, cycles are arrays of file paths:
+
+```json
+"cycles": [
+  ["net/network_replay_artifact.gd"]
+]
+```
+
+**When to act:** Cycles in critical layers (net, server, ai) are reported as `warning`. Cycles elsewhere are `info`. Single-file self-cycles (a file preloading itself) can be suppressed via `allow_cycles` if intentional.
+
+---
+
+## Parser warnings
+
+Parser warnings are emitted when the text-based extractor detects an ambiguous or incomplete situation:
+
+- **Duplicate `class_name`** — the same class name is declared in multiple files. The parser can't resolve which one a reference refers to and uses the first match. This is not an error, but it can cause confusing reference resolution.
+- **Unresolved reference** — a dependency reference couldn't be resolved to a known file. This happens for dynamic `load(variable)` calls.
+
+Parser warnings do not cause a non-zero exit. They appear in `parser_warnings` in `graph.json` and in `summary.txt`.
+
+**When to act:** Duplicate class names are worth fixing if they cause confusing behavior. Unresolved references are expected for dynamic loads — no action needed unless you care about completeness.
+
+---
+
+## Policy findings
+
+Each finding has a `rule_id`, `severity`, `message`, `file`, and optionally `line`.
+
+### Rule IDs
+
+| `rule_id` | Triggered by |
+|---|---|
+| `forbidden_dependency` | A dependency edge crosses a boundary defined in `[[policy.forbidden_dependencies]]` |
+| `file_lines_threshold` | A file exceeds `file_lines_warn` or `file_lines_critical` |
+| `function_lines_threshold` | A function exceeds `function_lines_warn` or `function_lines_critical` |
+| `cyclomatic_threshold` | A function's cyclomatic estimate exceeds `cyclomatic_warn` or `cyclomatic_critical` |
+| `nesting_threshold` | A function's max nesting depth exceeds `nesting_warn` or `nesting_critical` |
+| `parameters_threshold` | A function has ≥ `parameters_warn` parameters (always `warning`) |
+| `cycle_detected` | A dependency cycle was found and not suppressed by `allow_cycles` |
+
+### When to act vs when to ignore
+
+**Act immediately:**
+- `forbidden_dependency` at `critical` — this is an architecture rule your team explicitly encoded
+- `cycle_detected` at `warning` — cycles in net/server/ai layers indicate cross-layer coupling
+
+**Schedule work:**
+- `function_lines_threshold` or `cyclomatic_threshold` at `critical` — these functions are refactor candidates for the next sprint
+- `file_lines_threshold` at `critical` — consider whether the file should be split
+
+**Track but don't rush:**
+- `warning`-severity threshold findings — keep an eye on trend; act if a file keeps climbing
+- `parameters_threshold` — useful signal but lower urgency than size or cyclomatic
+
+**Suppress selectively:**
+- Use `allow_cycles` for intentional self-referencing patterns
+- Lower or raise thresholds in `[thresholds]` to match your team's standards
+
+---
+
+## Cross-group dependencies
+
+Cross-group dependencies are dependency edges that cross the group boundaries defined in `[groups]`. They are informational — only those matched by `[[policy.forbidden_dependencies]]` rules become policy findings.
+
+Use the cross-group dependency list to spot coupling that surprises you, even if it doesn't yet violate a rule. Consider whether to encode new forbidden rules.

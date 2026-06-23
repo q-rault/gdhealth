@@ -1,0 +1,22 @@
+{
+  "title": "gdhealth",
+  "pages": [
+    "index",
+    "---Getting Started---",
+    "why-gdhealth",
+    "installation",
+    "quickstart",
+    "---Reference---",
+    "cli-reference",
+    "configuration",
+    "interpreting-reports",
+    "schema-reference",
+    "---Recipes---",
+    "recipe-ci",
+    "recipe-architecture-review",
+    "---Integration---",
+    "gdsuite-integration",
+    "---Examples---",
+    "showcase"
+  ]
+}

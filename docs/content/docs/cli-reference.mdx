@@ -1,0 +1,131 @@
+---
+title: CLI Reference
+description: All gdhealth subcommands, flags, output formats, and exit codes.
+---
+
+## Global flags
+
+| Flag | Description |
+|---|---|
+| `--config <path>` | Path to `gdhealth.toml`. Defaults to `gdhealth.toml` in the current directory. If not found, built-in defaults are used. |
+
+## Subcommands
+
+### `gdhealth graph`
+
+Extract and render the file dependency graph.
+
+```sh
+gdhealth graph --root <path> [--format <fmt>] [--output <file>]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--root <path>` | `.` | Project root to analyze |
+| `--format <fmt>` | `text` | Output format (see table below) |
+| `--output <file>` | stdout | Write output to a file instead of stdout |
+| `--include-tests` | off | Include files matched by the `test` group |
+
+Always exits 0. Use `policy --fail-on` or `health --fail-on` to control CI behavior.
+
+---
+
+### `gdhealth metrics`
+
+Compute file and function-level complexity metrics.
+
+```sh
+gdhealth metrics --root <path> [--format json|text] [--output <file>]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--root <path>` | `.` | Project root to analyze |
+| `--format <fmt>` | `text` | `json` or `text` only |
+| `--output <file>` | stdout | Write output to a file |
+| `--include-tests` | off | Include files matched by the `test` group |
+
+Always exits 0. Does not support `--fail-on`.
+
+---
+
+### `gdhealth policy`
+
+Evaluate architecture and complexity policies.
+
+```sh
+gdhealth policy --root <path> [--format json|text] [--fail-on critical|warning|info]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--root <path>` | `.` | Project root to analyze |
+| `--format <fmt>` | `text` | `json` or `text` only |
+| `--output <file>` | stdout | Write output to a file |
+| `--fail-on <sev>` | off | Exit 1 if any finding is at or above this severity |
+
+---
+
+### `gdhealth health`
+
+Bundle a full health report. This is the recommended command for most users and CI.
+
+```sh
+gdhealth health --root <path> [--fail-on critical|warning|info]
+```
+
+When `--output` is **not** set, writes the full bundle to `<root>/reports/code-health/`:
+
+```
+reports/code-health/
+├── graph.json
+├── graph.dot
+├── metrics.json
+├── policy.json
+├── health.json
+└── summary.txt
+```
+
+When `--output <file>` is set, writes a single file in `--format json|text` instead.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--root <path>` | `.` | Project root to analyze |
+| `--format <fmt>` | `text` | `json` or `text` — only used when `--output` is set |
+| `--output <file>` | bundle | Write single file instead of the bundle |
+| `--fail-on <sev>` | off | Exit 1 if any finding is at or above this severity |
+
+---
+
+## Output format support matrix
+
+| Format | `graph` | `metrics` | `policy` | `health` |
+|---|:---:|:---:|:---:|:---:|
+| `text` | ✓ | ✓ | ✓ | ✓ |
+| `json` | ✓ | ✓ | ✓ | ✓ |
+| `dot` | ✓ | | | |
+| `emerge-json` | ✓ | | | |
+| `emerge-html` | ✓ | | | |
+
+`emerge-html` writes a self-contained browser viewer to `reports/code-health/browser/emerge.html`.
+
+Using an unsupported format for a command exits 1 with an error message.
+
+---
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. No findings at or above the `--fail-on` threshold (or `--fail-on` not set). |
+| `1` | Error: invalid config, I/O failure, unsupported format, or findings at/above `--fail-on` level. |
+
+---
+
+## `--fail-on` severity levels
+
+| Value | Triggers on |
+|---|---|
+| `info` | Any finding (info, warning, or critical) |
+| `warning` | Warning or critical findings |
+| `critical` | Critical findings only |

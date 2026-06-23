@@ -1,0 +1,54 @@
+root: C:/Users/me/AppData/Local/Temp/godot-open-rpg
+files: 78
+edges: 36
+cycles: 0
+cross-group dependencies: 19
+policy findings: 11
+parser warnings: 0
+top files:
+- src/field/gamepieces/controllers/player_controller.gd (hotspot: 131, lines: 222, funcs: 12, incoming: 0, outgoing: 0, cycles: 0)
+- src/field/gameboard/gameboard.gd (hotspot: 88, lines: 195, funcs: 13, incoming: 0, outgoing: 0, cycles: 0)
+- src/field/gameboard/pathfinder.gd (hotspot: 88, lines: 121, funcs: 8, incoming: 0, outgoing: 0, cycles: 0)
+- src/combat/ui/cursors/ui_battler_target_cursor.gd (hotspot: 81, lines: 161, funcs: 4, incoming: 0, outgoing: 3, cycles: 0)
+- src/field/cutscenes/interaction.gd (hotspot: 79, lines: 133, funcs: 8, incoming: 3, outgoing: 0, cycles: 0)
+- src/field/gamepieces/controllers/path_loop_ai_controller.gd (hotspot: 74, lines: 218, funcs: 9, incoming: 0, outgoing: 1, cycles: 0)
+- overworld/maps/house/wand_pedestal_interaction.gd (hotspot: 68, lines: 132, funcs: 5, incoming: 0, outgoing: 0, cycles: 0)
+- src/combat/combat.gd (hotspot: 66, lines: 245, funcs: 10, incoming: 0, outgoing: 0, cycles: 0)
+- src/field/cutscenes/trigger.gd (hotspot: 65, lines: 107, funcs: 6, incoming: 2, outgoing: 0, cycles: 0)
+- src/field/gamepieces/gamepiece_registry.gd (hotspot: 63, lines: 107, funcs: 9, incoming: 0, outgoing: 0, cycles: 0)
+top functions:
+- src/field/gamepieces/controllers/player_controller.gd::_unhandled_input (hotspot: 47, lines: 23, cyclomatic: 14, nesting: 2, params: 1)
+- src/combat/ui/cursors/ui_battler_target_cursor.gd::_unhandled_input (hotspot: 47, lines: 37, cyclomatic: 13, nesting: 3, params: 1)
+- src/field/gameboard/pathfinder.gd::get_path_to_cell (hotspot: 38, lines: 41, cyclomatic: 10, nesting: 3, params: 0)
+- src/combat/ui/action_menu/ui_action_menu.gd::setup (hotspot: 31, lines: 55, cyclomatic: 7, nesting: 3, params: 1)
+- src/combat/actions/battler_action.gd::execute (hotspot: 29, lines: 33, cyclomatic: 8, nesting: 2, params: 0)
+- src/field/gameboard/gameboard_layer.gd::_update_cells (hotspot: 29, lines: 20, cyclomatic: 7, nesting: 3, params: 2)
+- src/field/gamepieces/controllers/player_controller.gd::_on_interaction_selected (hotspot: 28, lines: 28, cyclomatic: 7, nesting: 3, params: 1)
+- src/combat/combat_ai_random.gd::select_action (hotspot: 26, lines: 33, cyclomatic: 6, nesting: 3, params: 1)
+- src/combat/ui/cursors/ui_battler_target_cursor.gd::_find_closest_target (hotspot: 24, lines: 30, cyclomatic: 6, nesting: 2, params: 1)
+- src/field/gameboard/gameboard.gd::_connect_new_pathfinder_cells (hotspot: 24, lines: 18, cyclomatic: 5, nesting: 4, params: 1)
+cross-group dependencies:
+- overworld/maps/opening_cutscene.gd -> assets/music/Apple Cider.mp3 (root_gameplay -> ungrouped)
+- src/combat/ui/battler_entry/ui_energy_bar.gd -> src/combat/ui/battler_entry/energy_point_bg.png (root_gameplay -> ungrouped)
+- src/combat/ui/battler_entry/ui_energy_bar.gd -> src/combat/ui/battler_entry/energy_point_fill.png (root_gameplay -> ungrouped)
+- src/combat/ui/battler_entry/ui_energy_bar.gd -> src/combat/ui/battler_entry/ui_energy_point.tscn (root_gameplay -> ungrouped)
+- src/combat/ui/cursors/ui_battler_target_cursor.gd -> src/combat/ui/action_menu/menu_selection_arrow.png (root_gameplay -> ungrouped)
+- src/combat/ui/cursors/ui_battler_target_cursor.gd -> src/combat/ui/cursors/ui_menu_cursor.tscn (root_gameplay -> ungrouped)
+- src/common/inventory.gd -> assets/items/bomb.atlastex (root_gameplay -> ungrouped)
+- src/common/inventory.gd -> assets/items/coin.atlastex (root_gameplay -> ungrouped)
+- src/common/inventory.gd -> assets/items/key.atlastex (root_gameplay -> ungrouped)
+- src/common/inventory.gd -> assets/items/wand_blue.atlastex (root_gameplay -> ungrouped)
+policy findings:
+- [warning] function_lines_threshold: src/combat/actions/battler_action_attack.gd::execute spans 42 lines (warn 40, critical 80)
+- [warning] function_lines_threshold: src/combat/combat.gd::setup spans 40 lines (warn 40, critical 80)
+- [warning] function_lines_threshold: src/combat/combat.gd::_select_next_player_action spans 44 lines (warn 40, critical 80)
+- [warning] function_lines_threshold: src/combat/ui/action_menu/ui_action_menu.gd::setup spans 55 lines (warn 40, critical 80)
+- [warning] cyclomatic_threshold: src/combat/ui/cursors/ui_battler_target_cursor.gd::_unhandled_input has cyclomatic estimate 13 (warn 10, critical 15)
+- [warning] function_lines_threshold: src/field/cutscenes/templates/area_transitions/area_transition.gd::_on_area_entered spans 40 lines (warn 40, critical 80)
+- [warning] function_lines_threshold: src/field/field_camera.gd::_on_viewport_resized spans 47 lines (warn 40, critical 80)
+- [warning] nesting_threshold: src/field/gameboard/gameboard.gd::_connect_new_pathfinder_cells has nesting depth 4 (warn 4, critical 6)
+- [warning] cyclomatic_threshold: src/field/gameboard/pathfinder.gd::get_path_to_cell has cyclomatic estimate 10 (warn 10, critical 15)
+- [warning] function_lines_threshold: src/field/gameboard/pathfinder.gd::get_path_to_cell spans 41 lines (warn 40, critical 80)
+- [warning] cyclomatic_threshold: src/field/gamepieces/controllers/player_controller.gd::_unhandled_input has cyclomatic estimate 14 (warn 10, critical 15)
+truncated top files to 10 of 78 entries
+truncated top functions to 10 of 279 entries

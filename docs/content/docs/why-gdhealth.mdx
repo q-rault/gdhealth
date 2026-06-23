@@ -1,0 +1,39 @@
+---
+title: Why gdhealth
+description: What problems gdhealth solves and when it is a strong fit for your team.
+---
+
+`gdhealth` is for Godot teams that want to understand the structural health of their codebase without running the editor.
+
+## What it detects
+
+- **Dependency cycles** — files that form circular dependency chains, which make refactoring and testing harder
+- **Architecture violations** — dependencies that cross group boundaries you've defined as forbidden (e.g. server code calling into UI)
+- **Complexity hotspots** — files and functions with high cyclomatic complexity, deep nesting, or excessive size
+- **Cross-group coupling** — dependencies that flow across logical layers, surfacing unintended coupling before it compounds
+- **Parser warnings** — duplicate `class_name` declarations and other structural issues the text parser can detect
+
+## Why not just the Godot editor
+
+The editor can show you scenes and scripts, but it doesn't:
+
+- give you a machine-readable dependency graph over the whole project
+- compute function-level complexity metrics across all files
+- enforce architecture rules in CI and exit non-zero when they're violated
+- produce stable JSON artifacts you can track over time or feed into other tools
+
+gdhealth runs entirely from the filesystem — no Godot runtime, no editor, no project import required.
+
+## When it is a strong fit
+
+- Your codebase has grown large enough that you can't hold its structure in your head
+- You want to catch architecture drift early (before it becomes painful to reverse)
+- You run a CI pipeline and want to block merges on critical policy violations
+- You're planning a refactor and need to know which files have the highest coupling and complexity
+- You want to produce stable reports for code review or team retrospectives
+
+## Next steps
+
+- [Installation](/docs/installation)
+- [Quickstart](/docs/quickstart)
+- [CLI Reference](/docs/cli-reference)

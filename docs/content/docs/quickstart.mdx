@@ -1,0 +1,93 @@
+---
+title: Quickstart
+description: Create a config, run gdhealth health, and read your first report.
+---
+
+## 1. Install
+
+```sh
+cargo install --path tools/gdhealth
+```
+
+Requires Rust 1.85+. See [Installation](/docs/installation) for details.
+
+## 2. Create a `gdhealth.toml` at your project root
+
+The minimal config below discovers all `.gd` files and applies default thresholds:
+
+```toml file="tools/gdhealth/tests/docs/gdhealth.example.toml" region="minimal"
+```
+
+For a full config with groups, thresholds, and policy rules, see [Configuration](/docs/configuration).
+
+## 3. Run the health command
+
+```sh
+gdhealth health --root .
+```
+
+This writes the full report bundle to `reports/code-health/`:
+
+```
+reports/code-health/
+├── summary.txt    ← human-readable overview
+├── health.json    ← machine-readable aggregate (the gdsuite integration surface)
+├── graph.json     ← full dependency graph
+├── graph.dot      ← GraphViz format for visualization tools
+├── metrics.json   ← file and function metrics
+└── policy.json    ← policy findings with severity
+```
+
+## 4. Read the summary
+
+```sh
+cat reports/code-health/summary.txt
+```
+
+You'll see something like:
+
+```text
+root: .
+files: 126
+edges: 142
+cycles: 1
+cross-group dependencies: 79
+policy findings: 91
+parser warnings: 22
+top files:
+- player.gd (hotspot: 204, lines: 717, funcs: 36, incoming: 0, outgoing: 1, cycles: 0)
+- ai/mob_ai_controller.gd (hotspot: 169, lines: 568, funcs: 33, incoming: 8, outgoing: 0, cycles: 0)
+top functions:
+- levels/main_level/terrain_grid.gd::_cast_light (hotspot: 72, lines: 90, cyclomatic: 19, nesting: 4, params: 0)
+policy findings:
+- [critical] function_lines_threshold: ...
+```
+
+## 5. Inspect `health.json` for automation
+
+```sh
+cat reports/code-health/health.json
+```
+
+The JSON has a stable schema suitable for scripting, CI dashboards, or aggregation by gdsuite:
+
+```json
+{
+  "tool_name": "gdhealth",
+  "schema_version": 1,
+  "summary": { "file_count": 126, "edge_count": 142, "policy_finding_count": 91 },
+  "top_files": [...],
+  "top_functions": [...],
+  "cycles": [...],
+  "policy_findings": [...],
+  "cross_group_dependencies": [...]
+}
+```
+
+See [Interpreting Reports](/docs/interpreting-reports) to understand what each field means and when to act on it.
+
+## Next steps
+
+- [Configuration](/docs/configuration) — set up groups, thresholds, and policy rules
+- [CLI Reference](/docs/cli-reference) — all flags and output formats
+- [CI Recipe](/docs/recipe-ci) — use `--fail-on` to block on critical findings

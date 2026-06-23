@@ -6,16 +6,47 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+// ── help flag tests ──────────────────────────────────────────────────────────
+
 #[test]
 fn graph_help_succeeds() {
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "graph", "--help"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("failed to run cargo");
-
+    let output = run_cargo_help(&["graph", "--help"]);
     assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("--root"), "help should mention --root");
+    assert!(text.contains("--format"), "help should mention --format");
 }
+
+#[test]
+fn metrics_help_succeeds() {
+    let output = run_cargo_help(&["metrics", "--help"]);
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("--root"), "help should mention --root");
+    assert!(text.contains("--format"), "help should mention --format");
+}
+
+#[test]
+fn policy_help_succeeds() {
+    let output = run_cargo_help(&["policy", "--help"]);
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("--fail-on"), "help should mention --fail-on");
+}
+
+#[test]
+fn health_help_succeeds() {
+    let output = run_cargo_help(&["health", "--help"]);
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("--fail-on"), "help should mention --fail-on");
+    assert!(
+        text.contains("reports/code-health"),
+        "help should mention bundle output path"
+    );
+}
+
+// ── bundle output test ───────────────────────────────────────────────────────
 
 #[test]
 fn health_writes_default_report_bundle() {
@@ -80,8 +111,66 @@ func tick() -> void:
     assert!(summary.contains("cross-group dependencies:"));
     assert!(summary.contains("main.gd depends on levels/main_level/hud/hud_panel.gd"));
 
+    // Verify health.json has all expected top-level fields
+    let health_json: Value = serde_json::from_str(
+        &fs::read_to_string(report_dir.join("health.json")).expect("read health.json"),
+    )
+    .expect("parse health.json");
+    assert_eq!(
+        health_json["tool_name"].as_str(),
+        Some("gdhealth"),
+        "health.json must have tool_name"
+    );
+    assert_eq!(
+        health_json["schema_version"].as_u64(),
+        Some(1),
+        "health.json must have schema_version: 1"
+    );
+    assert!(health_json["summary"].is_object(), "health.json must have summary");
+    assert!(health_json["top_files"].is_array(), "health.json must have top_files");
+    assert!(health_json["top_functions"].is_array(), "health.json must have top_functions");
+    assert!(health_json["cycles"].is_array(), "health.json must have cycles");
+    assert!(
+        health_json["policy_findings"].is_array(),
+        "health.json must have policy_findings"
+    );
+    assert!(
+        health_json["cross_group_dependencies"].is_array(),
+        "health.json must have cross_group_dependencies"
+    );
+
+    // Verify graph.json schema
+    let graph_json: Value = serde_json::from_str(
+        &fs::read_to_string(report_dir.join("graph.json")).expect("read graph.json"),
+    )
+    .expect("parse graph.json");
+    assert_eq!(graph_json["schema_version"].as_u64(), Some(1));
+    assert!(graph_json["files"].is_array());
+    assert!(graph_json["edges"].is_array());
+    assert!(graph_json["cycles"].is_array());
+    assert!(graph_json["parser_warnings"].is_array());
+
+    // Verify metrics.json schema
+    let metrics_json: Value = serde_json::from_str(
+        &fs::read_to_string(report_dir.join("metrics.json")).expect("read metrics.json"),
+    )
+    .expect("parse metrics.json");
+    assert_eq!(metrics_json["schema_version"].as_u64(), Some(1));
+    assert!(metrics_json["files"].is_array());
+    assert!(metrics_json["functions"].is_array());
+
+    // Verify policy.json schema
+    let policy_json: Value = serde_json::from_str(
+        &fs::read_to_string(report_dir.join("policy.json")).expect("read policy.json"),
+    )
+    .expect("parse policy.json");
+    assert_eq!(policy_json["schema_version"].as_u64(), Some(1));
+    assert!(policy_json["findings"].is_array());
+
     fs::remove_dir_all(&fixture_root).ok();
 }
+
+// ── policy fail-on test ──────────────────────────────────────────────────────
 
 #[test]
 fn policy_fails_on_critical_forbidden_dependency() {
@@ -124,6 +213,8 @@ const HUD = preload("res://levels/main_level/hud/hud_panel.gd")
 
     fs::remove_dir_all(&fixture_root).ok();
 }
+
+// ── cycle allowlist test ─────────────────────────────────────────────────────
 
 #[test]
 fn cycle_allowlist_suppresses_only_intended_findings() {
@@ -183,6 +274,8 @@ const SELF = preload("res://server/disallowed_cycle.gd")
 
     fs::remove_dir_all(&fixture_root).ok();
 }
+
+// ── determinism test ─────────────────────────────────────────────────────────
 
 #[test]
 fn outputs_are_deterministic_across_runs() {
@@ -331,6 +424,8 @@ const STATE = preload("res://shared/state.gd")
     fs::remove_dir_all(&fixture_root).ok();
 }
 
+// ── browser output test ──────────────────────────────────────────────────────
+
 #[test]
 fn graph_emerge_html_writes_browser_bundle() {
     let fixture_root = unique_temp_dir("gdhealth-emerge-html");
@@ -379,6 +474,8 @@ script = ExtResource("1")
     fs::remove_dir_all(&fixture_root).ok();
 }
 
+// ── config validation test ───────────────────────────────────────────────────
+
 #[test]
 fn config_validation_rejects_bad_inputs_through_cli() {
     let fixture_root = unique_temp_dir("gdhealth-invalid-config");
@@ -404,6 +501,123 @@ cyclomatic_critical = 10
 
     fs::remove_dir_all(&fixture_root).ok();
 }
+
+// ── unsupported format test ──────────────────────────────────────────────────
+
+#[test]
+fn unsupported_format_combination_fails_with_message() {
+    let fixture_root = unique_temp_dir("gdhealth-unsupported-format");
+    write_repo(
+        &fixture_root,
+        &bundle_config("warning", "[]"),
+        &[("main.gd", "extends RefCounted\n")],
+    );
+
+    let output = run_gdhealth(
+        &fixture_root,
+        &["metrics", "--root", ".", "--format", "dot"],
+    );
+    assert!(
+        !output.status.success(),
+        "metrics --format dot should fail, stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unsupported") || stderr.contains("does not support"),
+        "error message should mention unsupported format, got: {stderr}"
+    );
+
+    let output2 = run_gdhealth(
+        &fixture_root,
+        &["policy", "--root", ".", "--format", "emerge-json"],
+    );
+    assert!(
+        !output2.status.success(),
+        "policy --format emerge-json should fail"
+    );
+
+    let output3 = run_gdhealth(
+        &fixture_root,
+        &["health", "--root", ".", "--output", "out.json", "--format", "dot"],
+    );
+    assert!(
+        !output3.status.success(),
+        "health --format dot should fail"
+    );
+
+    fs::remove_dir_all(&fixture_root).ok();
+}
+
+// ── empty project test ───────────────────────────────────────────────────────
+
+#[test]
+fn empty_project_exits_zero() {
+    let fixture_root = unique_temp_dir("gdhealth-empty-project");
+    // Config only, no .gd files
+    write_repo(&fixture_root, &bundle_config("warning", "[]"), &[]);
+
+    let output = run_gdhealth(&fixture_root, &["health", "--root", "."]);
+    assert_success(&output);
+
+    // Bundle should still be written with empty/minimal content
+    let report_dir = fixture_root.join("reports").join("code-health");
+    assert!(
+        report_dir.join("health.json").is_file(),
+        "health.json should exist even for empty project"
+    );
+
+    let health_json: Value = serde_json::from_str(
+        &fs::read_to_string(report_dir.join("health.json")).expect("read health.json"),
+    )
+    .expect("parse health.json");
+    assert_eq!(
+        health_json["summary"]["file_count"].as_u64(),
+        Some(0),
+        "empty project should report 0 files"
+    );
+
+    fs::remove_dir_all(&fixture_root).ok();
+}
+
+// ── parser warnings test ─────────────────────────────────────────────────────
+
+#[test]
+fn parser_warnings_do_not_fail_without_fail_on() {
+    let fixture_root = unique_temp_dir("gdhealth-parser-warnings");
+    // A file that references a class that doesn't exist → parser warning for unresolved reference
+    write_repo(
+        &fixture_root,
+        &bundle_config("warning", "[]"),
+        &[(
+            "main.gd",
+            r#"extends RefCounted
+extends NonExistentClass
+"#,
+        )],
+    );
+
+    let output = run_gdhealth(&fixture_root, &["health", "--root", "."]);
+    // Parser warnings alone should not cause failure — only --fail-on triggers exit 1
+    assert_success(&output);
+
+    fs::remove_dir_all(&fixture_root).ok();
+}
+
+// ── helper: run cargo for help commands (slow but consistent with ci) ─────────
+
+fn run_cargo_help(args: &[&str]) -> Output {
+    let mut all_args = vec!["run", "--quiet", "--"];
+    all_args.extend_from_slice(args);
+    Command::new("cargo")
+        .args(all_args)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("failed to run cargo")
+}
+
+// ── shared helpers ────────────────────────────────────────────────────────────
 
 fn bundle_config(forbidden_severity: &str, allow_cycles: &str) -> String {
     format!(

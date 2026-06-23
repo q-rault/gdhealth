@@ -1,151 +1,149 @@
 # gdhealth
 
-`gdhealth` is a Rust-based code-health CLI for Godot/GDScript repositories.
+`gdhealth` is a code-health CLI for Godot/GDScript repositories. It extracts dependency graphs, computes complexity metrics, evaluates architecture policies, and bundles actionable reports — without requiring Godot to run.
 
-This repository starts from a PoC plan focused on one goal: produce deterministic, actionable code-health reports for a GDScript codebase without requiring Godot to run.
+## Why use it
 
-## PoC Objective
+- Surface dependency cycles and architecture violations before they compound
+- Identify the highest-complexity files and functions as refactor targets
+- Enforce size, complexity, and dependency rules in CI with exit-code semantics
+- Produce stable, machine-readable JSON artifacts for trend tracking and tooling
 
-The first implementation target is a single Rust package that can:
+## Install
 
-- discover repo-owned `.gd` files
-- extract lightweight dependency information
-- compute file and function hotspot metrics
-- evaluate a small set of architecture and threshold policies
-- emit machine-readable reports plus a readable text summary
+Requires Rust 1.85+.
 
-Success for the PoC means the tool can surface obvious structural and complexity hotspots in a target repository and generate stable outputs suitable for refactor planning.
-
-## Planned Repository Layout
-
-The implementation will follow this structure:
-
-```text
-.
-|-- README.md
-|-- gdhealth.toml
-|-- reports/
-|   `-- code-health/
-`-- tools/
-    `-- gdhealth/
-        |-- Cargo.toml
-        |-- README.md
-        |-- src/
-        `-- tests/
+```sh
+cargo install --path tools/gdhealth
 ```
 
-The tool itself stays in a single Cargo package under `tools/gdhealth/`.
+Or build without installing:
 
-## Planned CLI Surface
+```sh
+cargo build --release --manifest-path tools/gdhealth/Cargo.toml
+```
 
-The PoC CLI will expose four subcommands:
+## Quickstart
 
-- `gdhealth graph`
-- `gdhealth metrics`
-- `gdhealth policy`
-- `gdhealth health`
+**1. Create a `gdhealth.toml` at your project root:**
 
-Shared options will include:
+```toml
+[discovery]
+include = ["**/*.gd"]
+exclude = ["addons/**", ".godot/**", "reports/**"]
 
-- `--root <path>`
-- `--config <path>`
-- `--format <json|text|dot>`
-- `--output <path>`
-- `--include-tests`
-- `--fail-on <severity>`
+[groups]
+gameplay = ["*.gd", "!server/**", "!net/**"]
+net      = ["net/**"]
+server   = ["server/**"]
 
-## Scope
+[thresholds]
+file_lines_warn     = 500
+file_lines_critical = 1000
+cyclomatic_warn     = 10
+cyclomatic_critical = 15
 
-In scope:
+[policy]
+allow_cycles = []
 
-- `.gd` discovery with include/exclude filtering
-- tolerant extraction of selected dependency constructs
-- file/function/class metrics
-- hotspot ranking
-- config-driven policy checks
-- JSON output
-- DOT graph output
-- text summary output
+[[policy.forbidden_dependencies]]
+from     = "server"
+to       = "gameplay"
+severity = "critical"
+```
 
-Out of scope:
+**2. Run the health command:**
 
-- full GDScript semantic analysis
-- dead-code detection with strong guarantees
-- auto-fixes
-- formatting
-- type inference
-- editor integration
-- multi-crate decomposition
+```sh
+gdhealth health --root .
+```
 
-## Supported Analysis Strategy
+**3. Inspect the bundle written to `reports/code-health/`:**
 
-The PoC intentionally favors tolerant extraction over full parsing.
+```
+reports/code-health/
+├── summary.txt    ← human-readable summary
+├── health.json    ← machine-readable aggregate
+├── graph.json     ← full dependency graph
+├── graph.dot      ← GraphViz format
+├── metrics.json   ← file and function metrics
+└── policy.json    ← policy findings
+```
 
-Initial dependency extraction targets:
+```sh
+cat reports/code-health/summary.txt
+```
 
-- `extends "res://..."`
-- `extends SomeClassName`
-- `class_name Foo`
-- `const X = preload("res://...")`
-- `preload("res://...")`
-- `load("res://...")`
+## Commands
 
-Initial metric extraction targets:
+| Command            | What it does                                              |
+|--------------------|-----------------------------------------------------------|
+| `gdhealth graph`   | Extract and render the file dependency graph              |
+| `gdhealth metrics` | Compute file and function-level complexity metrics        |
+| `gdhealth policy`  | Evaluate architecture and threshold policies              |
+| `gdhealth health`  | Bundle graph + metrics + policy + summary (recommended)   |
 
-- `func name(...)`
-- indentation-based block tracking
-- control-flow markers such as `if`, `elif`, `else`, `for`, `while`, and `match`
+Each command accepts `--root <path>`, `--format <format>`, `--output <file>`, and `--fail-on <severity>`.
 
-## Expected Outputs
+## Output formats
 
-Generated reports will live under `reports/code-health/`:
+| Format         | `graph` | `metrics` | `policy` | `health` |
+|----------------|:-------:|:---------:|:--------:|:--------:|
+| `text`         | ✓       | ✓         | ✓        | ✓        |
+| `json`         | ✓       | ✓         | ✓        | ✓        |
+| `dot`          | ✓       |           |          |          |
+| `emerge-json`  | ✓       |           |          |          |
+| `emerge-html`  | ✓       |           |          |          |
 
-- `graph.json`
-- `graph.dot`
-- `metrics.json`
-- `policy.json`
-- `health.json`
-- `summary.txt`
+The `emerge-html` format writes a self-contained browser viewer to `reports/code-health/browser/`.
 
-Optional later output:
+## CI usage
 
-- `health.html`
-- `graph --format emerge-html`
+Use `--fail-on` to control exit code behavior:
 
-## Implementation Priorities
+```sh
+# Exit 1 if any critical findings are present
+gdhealth health --root . --fail-on critical
 
-1. bootstrap a usable CLI before refining parser sophistication
-2. keep outputs deterministic and trustworthy
-3. keep repo-specific assumptions in `gdhealth.toml`
-4. preserve stable command names and JSON schema shape from the start
-5. avoid overengineering the package structure
+# Exit 1 if any warning or critical findings are present
+gdhealth policy --root . --format json --fail-on warning
+```
 
-## Initial Roadmap
+**Exit codes:**
 
-1. Bootstrap the Rust crate in `tools/gdhealth` with CLI, config loading, and discovery.
-2. Implement dependency graph extraction and export to JSON and DOT.
-3. Implement metric extraction and hotspot scoring.
-4. Add config-driven policy evaluation.
-5. Build aggregate health reporting and output generation.
-6. Harden with deterministic ordering, fixtures, and integration tests.
+| Code | Meaning                                          |
+|------|--------------------------------------------------|
+| `0`  | Success, no findings at or above threshold       |
+| `1`  | Config error, I/O error, unsupported format, or findings at/above `--fail-on` level |
 
-## Non-Goals
+**Example GitHub Actions step:**
 
-This repository is not intended to become:
+```yaml
+- name: Run gdhealth
+  run: gdhealth health --root . --fail-on critical
+```
 
-- a full semantic linter
-- an auto-fix tool
-- a complete dead-code detector
-- a Godot editor plugin
+## Configuration
 
-## Status
+All behavior is driven by `gdhealth.toml`. Place it at your project root or pass `--config <path>`.
 
-Current state:
+See the [full configuration reference](docs/content/docs/configuration.mdx) for all options.
 
-- plan imported from `poc-plan-single-crate-rust-code-health-tool-for-godot-gdscript.md`
-- git repository initialized
-- repository README established
+## How it fits into gdsuite
 
-Next implementation target:
+`gdhealth` is part of the [gdsuite](https://github.com/q-rault/gdsuite) platform for Godot development tooling.
 
-- bootstrap `tools/gdhealth` and make `gdhealth graph --root . --format text` run end to end
+`gdsuite health` invokes `gdhealth health` as its backend. It consumes:
+- exit code for pass/fail signaling
+- `reports/code-health/summary.txt` for human display
+- `reports/code-health/health.json` for machine aggregation
+
+Advanced features (browser graph, DOT export, entity scan) are gdhealth-specific and available directly via the CLI.
+
+## Current limits
+
+- The parser is text-based, not a full GDScript semantic parser
+- Dynamic `load(variable)` calls are not resolved (only string-literal `load("res://...")` is)
+- Only `.gd` dependencies become graph edges (`.tres` resource references are tracked separately via `ExtResource` scanning)
+- Duplicate `class_name` declarations surface as parser warnings rather than being disambiguated
+- `gdhealth health --output <file>` writes a single file instead of the full bundle

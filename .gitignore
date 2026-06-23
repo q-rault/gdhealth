@@ -1,6 +1,21 @@
+# Rust
 /tools/gdhealth/target/
-/reports/code-health/*.json
-/reports/code-health/*.dot
-/reports/code-health/*.txt
-/reports/code-health/*.html
+
+# Reports (generated output, not source)
+/reports/
+/example-game/reports/
+
+# Local project — example-game is a separate repo, not part of gdhealth
 /example-game/
+
+# Docs build artifacts
+/docs/.next/
+/docs/.source/
+/docs/node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

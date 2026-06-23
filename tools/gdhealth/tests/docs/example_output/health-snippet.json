@@ -1,0 +1,80 @@
+{
+  "tool_name": "gdhealth",
+  "tool_version": "0.1.0",
+  "schema_version": 1,
+  "summary": {
+    "file_count": 126,
+    "edge_count": 142,
+    "policy_finding_count": 91
+  },
+  "top_files": [
+    {
+      "file": "player.gd",
+      "line_count": 717,
+      "function_count": 36,
+      "number_of_methods": 36,
+      "signal_count": 0,
+      "public_function_count": 10,
+      "outgoing_dependency_count": 1,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 346,
+      "tfidf": 0.085,
+      "louvain_modularity": 6,
+      "file_hotspot_score": 204
+    },
+    {
+      "file": "ai/mob_ai_controller.gd",
+      "line_count": 568,
+      "function_count": 33,
+      "number_of_methods": 33,
+      "signal_count": 0,
+      "public_function_count": 5,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 8,
+      "cycle_count": 0,
+      "ws_complexity": 310,
+      "tfidf": 0.199,
+      "louvain_modularity": 3,
+      "file_hotspot_score": 169
+    }
+  ],
+  "top_functions": [
+    {
+      "file": "levels/main_level/terrain_grid.gd",
+      "function_name": "_cast_light",
+      "start_line": 210,
+      "end_line": 300,
+      "line_count": 90,
+      "branch_count": 15,
+      "cyclomatic_estimate": 19,
+      "max_nesting_depth": 4,
+      "parameter_count": 0,
+      "hotspot_score": 72
+    }
+  ],
+  "cycles": [
+    ["net/network_replay_artifact.gd"]
+  ],
+  "policy_findings": [
+    {
+      "rule_id": "function_lines_threshold",
+      "severity": "critical",
+      "message": "levels/main_level/terrain_grid.gd::_cast_light spans 90 lines (warn 40, critical 80)",
+      "file": "levels/main_level/terrain_grid.gd",
+      "line": 210,
+      "related_files": ["levels/main_level/terrain_grid.gd"]
+    },
+    {
+      "rule_id": "cyclomatic_threshold",
+      "severity": "critical",
+      "message": "player.gd::_physics_process has cyclomatic estimate 18 (warn 10, critical 15)",
+      "file": "player.gd",
+      "line": 45,
+      "related_files": ["player.gd"]
+    }
+  ],
+  "cross_group_dependencies": [
+    "client/player_local.gd -> shared/snapshot_format.gd (ungrouped -> gameplay)"
+  ]
+}

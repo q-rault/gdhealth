@@ -1,0 +1,78 @@
+---
+title: CI Usage
+description: Use gdhealth in CI to block merges on policy violations.
+---
+
+## Basic pattern
+
+Run `gdhealth health` with `--fail-on critical` to exit 1 when any critical finding is present:
+
+```sh
+gdhealth health --root . --fail-on critical
+```
+
+Exit 0 means the run succeeded with no critical findings. Exit 1 means either an error occurred or critical findings were found.
+
+## GitHub Actions
+
+```yaml
+name: health
+on: [push, pull_request]
+jobs:
+  gdhealth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install --path tools/gdhealth
+      - run: gdhealth health --root . --fail-on critical
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-health-report
+          path: reports/code-health/
+```
+
+The `upload-artifact` step runs even on failure so you can inspect the report when the check blocks.
+
+## Choosing a fail-on threshold
+
+| Threshold | What it blocks |
+|---|---|
+| `critical` | Architecture violations and severely oversized functions. Recommended starting point. |
+| `warning` | Everything above, plus warning-level threshold violations. Tighter — expect more noise initially. |
+| `info` | Any finding. Very strict; tune thresholds first before enabling. |
+
+Start with `--fail-on critical` and tune thresholds in `gdhealth.toml` until the baseline passes. Then tighten to `warning` once the team has resolved the critical findings.
+
+## Policy-only check
+
+If you only want to check architecture rules (not complexity thresholds):
+
+```sh
+gdhealth policy --root . --format json --fail-on critical
+```
+
+This is faster than `health` for pure architecture gate checks.
+
+## Caching the binary
+
+To avoid rebuilding on every run, cache the Cargo registry:
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: |
+      ~/.cargo/registry
+      ~/.cargo/git
+      tools/gdhealth/target
+    key: gdhealth-${{ hashFiles('tools/gdhealth/Cargo.lock') }}
+```
+
+## Reading the report in CI
+
+The full bundle is written to `reports/code-health/`. The most useful files for CI:
+
+- `summary.txt` — paste into a PR comment or job summary
+- `health.json` — parse for structured automation
+- `policy.json` — all findings for linting dashboards

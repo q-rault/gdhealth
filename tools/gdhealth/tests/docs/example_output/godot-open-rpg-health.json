@@ -1,0 +1,418 @@
+{
+  "tool_name": "gdhealth",
+  "tool_version": "0.1.0",
+  "schema_version": 1,
+  "summary": {
+    "file_count": 78,
+    "edge_count": 36,
+    "policy_finding_count": 11
+  },
+  "top_files": [
+    {
+      "file": "src/field/gamepieces/controllers/player_controller.gd",
+      "line_count": 222,
+      "function_count": 12,
+      "number_of_methods": 12,
+      "signal_count": 0,
+      "public_function_count": 3,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 141,
+      "tfidf": 0.12636931661225043,
+      "louvain_modularity": 55,
+      "file_hotspot_score": 131
+    },
+    {
+      "file": "src/field/gameboard/gameboard.gd",
+      "line_count": 195,
+      "function_count": 13,
+      "number_of_methods": 13,
+      "signal_count": 2,
+      "public_function_count": 8,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 93,
+      "tfidf": 0.11562077700546695,
+      "louvain_modularity": 47,
+      "file_hotspot_score": 88
+    },
+    {
+      "file": "src/field/gameboard/pathfinder.gd",
+      "line_count": 121,
+      "function_count": 8,
+      "number_of_methods": 8,
+      "signal_count": 0,
+      "public_function_count": 4,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 71,
+      "tfidf": 0.08141368726190722,
+      "louvain_modularity": 50,
+      "file_hotspot_score": 88
+    },
+    {
+      "file": "src/combat/ui/cursors/ui_battler_target_cursor.gd",
+      "line_count": 161,
+      "function_count": 4,
+      "number_of_methods": 4,
+      "signal_count": 1,
+      "public_function_count": 0,
+      "outgoing_dependency_count": 3,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 72,
+      "tfidf": 0.12713707658282258,
+      "louvain_modularity": 27,
+      "file_hotspot_score": 81
+    },
+    {
+      "file": "src/field/cutscenes/interaction.gd",
+      "line_count": 133,
+      "function_count": 8,
+      "number_of_methods": 8,
+      "signal_count": 0,
+      "public_function_count": 0,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 3,
+      "cycle_count": 0,
+      "ws_complexity": 57,
+      "tfidf": 0.09322989698368209,
+      "louvain_modularity": 3,
+      "file_hotspot_score": 79
+    },
+    {
+      "file": "src/field/gamepieces/controllers/path_loop_ai_controller.gd",
+      "line_count": 218,
+      "function_count": 9,
+      "number_of_methods": 9,
+      "signal_count": 0,
+      "public_function_count": 1,
+      "outgoing_dependency_count": 1,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 60,
+      "tfidf": 0.13341740539700103,
+      "louvain_modularity": 54,
+      "file_hotspot_score": 74
+    },
+    {
+      "file": "overworld/maps/house/wand_pedestal_interaction.gd",
+      "line_count": 132,
+      "function_count": 5,
+      "number_of_methods": 5,
+      "signal_count": 0,
+      "public_function_count": 0,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 44,
+      "tfidf": 0.1552669225127418,
+      "louvain_modularity": 1,
+      "file_hotspot_score": 68
+    },
+    {
+      "file": "src/combat/combat.gd",
+      "line_count": 245,
+      "function_count": 10,
+      "number_of_methods": 10,
+      "signal_count": 0,
+      "public_function_count": 2,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 47,
+      "tfidf": 0.08154837414560749,
+      "louvain_modularity": 15,
+      "file_hotspot_score": 66
+    },
+    {
+      "file": "src/field/cutscenes/trigger.gd",
+      "line_count": 107,
+      "function_count": 6,
+      "number_of_methods": 6,
+      "signal_count": 3,
+      "public_function_count": 0,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 2,
+      "cycle_count": 0,
+      "ws_complexity": 41,
+      "tfidf": 0.14739314985820864,
+      "louvain_modularity": 0,
+      "file_hotspot_score": 65
+    },
+    {
+      "file": "src/field/gamepieces/gamepiece_registry.gd",
+      "line_count": 107,
+      "function_count": 9,
+      "number_of_methods": 9,
+      "signal_count": 2,
+      "public_function_count": 7,
+      "outgoing_dependency_count": 0,
+      "incoming_dependency_count": 0,
+      "cycle_count": 0,
+      "ws_complexity": 41,
+      "tfidf": 0.25712202368110043,
+      "louvain_modularity": 56,
+      "file_hotspot_score": 63
+    }
+  ],
+  "top_functions": [
+    {
+      "file": "src/field/gamepieces/controllers/player_controller.gd",
+      "function_name": "_unhandled_input",
+      "start_line": 72,
+      "end_line": 94,
+      "line_count": 23,
+      "branch_count": 13,
+      "cyclomatic_estimate": 14,
+      "max_nesting_depth": 2,
+      "parameter_count": 1,
+      "hotspot_score": 47
+    },
+    {
+      "file": "src/combat/ui/cursors/ui_battler_target_cursor.gd",
+      "function_name": "_unhandled_input",
+      "start_line": 84,
+      "end_line": 120,
+      "line_count": 37,
+      "branch_count": 12,
+      "cyclomatic_estimate": 13,
+      "max_nesting_depth": 3,
+      "parameter_count": 1,
+      "hotspot_score": 47
+    },
+    {
+      "file": "src/field/gameboard/pathfinder.gd",
+      "function_name": "get_path_to_cell",
+      "start_line": 55,
+      "end_line": 95,
+      "line_count": 41,
+      "branch_count": 9,
+      "cyclomatic_estimate": 10,
+      "max_nesting_depth": 3,
+      "parameter_count": 0,
+      "hotspot_score": 38
+    },
+    {
+      "file": "src/combat/ui/action_menu/ui_action_menu.gd",
+      "function_name": "setup",
+      "start_line": 36,
+      "end_line": 90,
+      "line_count": 55,
+      "branch_count": 6,
+      "cyclomatic_estimate": 7,
+      "max_nesting_depth": 3,
+      "parameter_count": 1,
+      "hotspot_score": 31
+    },
+    {
+      "file": "src/combat/actions/battler_action.gd",
+      "function_name": "execute",
+      "start_line": 79,
+      "end_line": 111,
+      "line_count": 33,
+      "branch_count": 7,
+      "cyclomatic_estimate": 8,
+      "max_nesting_depth": 2,
+      "parameter_count": 0,
+      "hotspot_score": 29
+    },
+    {
+      "file": "src/field/gameboard/gameboard_layer.gd",
+      "function_name": "_update_cells",
+      "start_line": 71,
+      "end_line": 90,
+      "line_count": 20,
+      "branch_count": 6,
+      "cyclomatic_estimate": 7,
+      "max_nesting_depth": 3,
+      "parameter_count": 2,
+      "hotspot_score": 29
+    },
+    {
+      "file": "src/field/gamepieces/controllers/player_controller.gd",
+      "function_name": "_on_interaction_selected",
+      "start_line": 153,
+      "end_line": 180,
+      "line_count": 28,
+      "branch_count": 6,
+      "cyclomatic_estimate": 7,
+      "max_nesting_depth": 3,
+      "parameter_count": 1,
+      "hotspot_score": 28
+    },
+    {
+      "file": "src/combat/combat_ai_random.gd",
+      "function_name": "select_action",
+      "start_line": 14,
+      "end_line": 46,
+      "line_count": 33,
+      "branch_count": 5,
+      "cyclomatic_estimate": 6,
+      "max_nesting_depth": 3,
+      "parameter_count": 1,
+      "hotspot_score": 26
+    },
+    {
+      "file": "src/combat/ui/cursors/ui_battler_target_cursor.gd",
+      "function_name": "_find_closest_target",
+      "start_line": 132,
+      "end_line": 161,
+      "line_count": 30,
+      "branch_count": 5,
+      "cyclomatic_estimate": 6,
+      "max_nesting_depth": 2,
+      "parameter_count": 1,
+      "hotspot_score": 24
+    },
+    {
+      "file": "src/field/gameboard/gameboard.gd",
+      "function_name": "_connect_new_pathfinder_cells",
+      "start_line": 165,
+      "end_line": 182,
+      "line_count": 18,
+      "branch_count": 4,
+      "cyclomatic_estimate": 5,
+      "max_nesting_depth": 4,
+      "parameter_count": 1,
+      "hotspot_score": 24
+    }
+  ],
+  "cycles": [],
+  "policy_findings": [
+    {
+      "rule_id": "function_lines_threshold",
+      "severity": "warning",
+      "message": "src/combat/actions/battler_action_attack.gd::execute spans 42 lines (warn 40, critical 80)",
+      "file": "src/combat/actions/battler_action_attack.gd",
+      "line": 12,
+      "related_files": [
+        "src/combat/actions/battler_action_attack.gd"
+      ]
+    },
+    {
+      "rule_id": "function_lines_threshold",
+      "severity": "warning",
+      "message": "src/combat/combat.gd::setup spans 40 lines (warn 40, critical 80)",
+      "file": "src/combat/combat.gd",
+      "line": 50,
+      "related_files": [
+        "src/combat/combat.gd"
+      ]
+    },
+    {
+      "rule_id": "function_lines_threshold",
+      "severity": "warning",
+      "message": "src/combat/combat.gd::_select_next_player_action spans 44 lines (warn 40, critical 80)",
+      "file": "src/combat/combat.gd",
+      "line": 111,
+      "related_files": [
+        "src/combat/combat.gd"
+      ]
+    },
+    {
+      "rule_id": "function_lines_threshold",
+      "severity": "warning",
+      "message": "src/combat/ui/action_menu/ui_action_menu.gd::setup spans 55 lines (warn 40, critical 80)",
+      "file": "src/combat/ui/action_menu/ui_action_menu.gd",
+      "line": 36,
+      "related_files": [
+        "src/combat/ui/action_menu/ui_action_menu.gd"
+      ]
+    },
+    {
+      "rule_id": "cyclomatic_threshold",
+      "severity": "warning",
+      "message": "src/combat/ui/cursors/ui_battler_target_cursor.gd::_unhandled_input has cyclomatic estimate 13 (warn 10, critical 15)",
+      "file": "src/combat/ui/cursors/ui_battler_target_cursor.gd",
+      "line": 84,
+      "related_files": [
+        "src/combat/ui/cursors/ui_battler_target_cursor.gd"
+      ]
+    },
+    {
+      "rule_id": "function_lines_threshold",
+      "severity": "warning",
+      "message": "src/field/cutscenes/templates/area_transitions/area_transition.gd::_on_area_entered spans 40 lines (warn 40, critical 80)",
+      "file": "src/field/cutscenes/templates/area_transitions/area_transition.gd",
+      "line": 37,
+      "related_files": [
+        "src/field/cutscenes/templates/area_transitions/area_transition.gd"
+      ]
+    },
+    {
+      "rule_id": "function_lines_threshold",
+      "severity": "warning",
+      "message": "src/field/field_camera.gd::_on_viewport_resized spans 47 lines (warn 40, critical 80)",
+      "file": "src/field/field_camera.gd",
+      "line": 38,
+      "related_files": [
+        "src/field/field_camera.gd"
+      ]
+    },
+    {
+      "rule_id": "nesting_threshold",
+      "severity": "warning",
+      "message": "src/field/gameboard/gameboard.gd::_connect_new_pathfinder_cells has nesting depth 4 (warn 4, critical 6)",
+      "file": "src/field/gameboard/gameboard.gd",
+      "line": 165,
+      "related_files": [
+        "src/field/gameboard/gameboard.gd"
+      ]
+    },
+    {
+      "rule_id": "cyclomatic_threshold",
+      "severity": "warning",
+      "message": "src/field/gameboard/pathfinder.gd::get_path_to_cell has cyclomatic estimate 10 (warn 10, critical 15)",
+      "file": "src/field/gameboard/pathfinder.gd",
+      "line": 55,
+      "related_files": [
+        "src/field/gameboard/pathfinder.gd"
+      ]
+    },
+    {
+      "rule_id": "function_lines_threshold",
+      "severity": "warning",
+      "message": "src/field/gameboard/pathfinder.gd::get_path_to_cell spans 41 lines (warn 40, critical 80)",
+      "file": "src/field/gameboard/pathfinder.gd",
+      "line": 55,
+      "related_files": [
+        "src/field/gameboard/pathfinder.gd"
+      ]
+    },
+    {
+      "rule_id": "cyclomatic_threshold",
+      "severity": "warning",
+      "message": "src/field/gamepieces/controllers/player_controller.gd::_unhandled_input has cyclomatic estimate 14 (warn 10, critical 15)",
+      "file": "src/field/gamepieces/controllers/player_controller.gd",
+      "line": 72,
+      "related_files": [
+        "src/field/gamepieces/controllers/player_controller.gd"
+      ]
+    }
+  ],
+  "cross_group_dependencies": [
+    "overworld/maps/opening_cutscene.gd -> assets/music/Apple Cider.mp3 (root_gameplay -> ungrouped)",
+    "src/combat/ui/battler_entry/ui_energy_bar.gd -> src/combat/ui/battler_entry/energy_point_bg.png (root_gameplay -> ungrouped)",
+    "src/combat/ui/battler_entry/ui_energy_bar.gd -> src/combat/ui/battler_entry/energy_point_fill.png (root_gameplay -> ungrouped)",
+    "src/combat/ui/battler_entry/ui_energy_bar.gd -> src/combat/ui/battler_entry/ui_energy_point.tscn (root_gameplay -> ungrouped)",
+    "src/combat/ui/cursors/ui_battler_target_cursor.gd -> src/combat/ui/action_menu/menu_selection_arrow.png (root_gameplay -> ungrouped)",
+    "src/combat/ui/cursors/ui_battler_target_cursor.gd -> src/combat/ui/cursors/ui_menu_cursor.tscn (root_gameplay -> ungrouped)",
+    "src/common/inventory.gd -> assets/items/bomb.atlastex (root_gameplay -> ungrouped)",
+    "src/common/inventory.gd -> assets/items/coin.atlastex (root_gameplay -> ungrouped)",
+    "src/common/inventory.gd -> assets/items/key.atlastex (root_gameplay -> ungrouped)",
+    "src/common/inventory.gd -> assets/items/wand_blue.atlastex (root_gameplay -> ungrouped)",
+    "src/common/inventory.gd -> assets/items/wand_green.atlastex (root_gameplay -> ungrouped)",
+    "src/common/inventory.gd -> assets/items/wand_red.atlastex (root_gameplay -> ungrouped)",
+    "src/field/cutscenes/popups/interaction_popup.gd -> assets/gui/emotes/emote__.png (root_gameplay -> ungrouped)",
+    "src/field/cutscenes/popups/interaction_popup.gd -> assets/gui/emotes/emote_combat.png (root_gameplay -> ungrouped)",
+    "src/field/cutscenes/popups/interaction_popup.gd -> assets/gui/emotes/emote_exclamations.png (root_gameplay -> ungrouped)",
+    "src/field/cutscenes/popups/interaction_popup.gd -> assets/gui/emotes/emote_question.png (root_gameplay -> ungrouped)",
+    "src/field/cutscenes/templates/doors/door.gd -> src/field/gamepieces/gamepiece.tscn (root_gameplay -> ungrouped)",
+    "src/field/ui/inventory/ui_inventory.gd -> assets/items/coin.atlastex (root_gameplay -> ungrouped)",
+    "src/field/ui/inventory/ui_inventory.gd -> src/field/ui/inventory/ui_inventory_item.tscn (root_gameplay -> ungrouped)"
+  ]
+}

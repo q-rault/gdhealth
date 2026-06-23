@@ -1,0 +1,82 @@
+---
+title: Architecture Review
+description: Use gdhealth graph and policy together for a structural codebase review.
+---
+
+Architecture review with gdhealth follows a three-step pattern: discover what's coupled, encode what shouldn't be, and visualize what remains.
+
+## Step 1: Map your layers
+
+Run `gdhealth graph` to get a first look at the dependency structure:
+
+```sh
+gdhealth graph --root . --format text
+```
+
+Read the output to identify which directories represent logical layers (gameplay, server, net, ui, test, etc.). Use this to define your `[groups]` in `gdhealth.toml`.
+
+## Step 2: Run the health bundle
+
+```sh
+gdhealth health --root .
+```
+
+Open `reports/code-health/summary.txt` and look at:
+
+- **cross-group dependencies** — which groups are coupled, and in which direction
+- **cycles** — files that mutually depend on each other
+- **top files** by hotspot score — where complexity has accumulated
+
+## Step 3: Encode architectural rules
+
+Once you've identified forbidden couplings, add them to `gdhealth.toml`:
+
+```toml
+[[policy.forbidden_dependencies]]
+from     = "server"
+to       = "gameplay"
+severity = "critical"
+
+[[policy.forbidden_dependencies]]
+from     = "net"
+to       = "server"
+severity = "warning"
+```
+
+Re-run `gdhealth health --root .` to see how many existing edges violate the rules. Work through findings from critical down to warning.
+
+## Step 4: Visualize with the browser viewer
+
+For a visual overview of the dependency graph:
+
+```sh
+gdhealth graph --root . --format emerge-html
+```
+
+Open `reports/code-health/browser/emerge.html` in a browser. The viewer shows:
+
+- the file dependency graph with cluster coloring (Louvain community detection)
+- per-file metrics on hover (fan-in, fan-out, hotspot score)
+- the inheritance graph and complete combined graph
+
+This is useful for presenting architecture findings to the team.
+
+## Step 5: Export to DOT for existing tools
+
+If your team already uses GraphViz or other graph tools:
+
+```sh
+gdhealth graph --root . --format dot --output reports/code-health/graph.dot
+dot -Tsvg reports/code-health/graph.dot -o graph.svg
+```
+
+## Recommended review workflow
+
+1. Run `gdhealth health --root .` on the target branch
+2. Read `summary.txt` — note cycle count, cross-group count, critical findings
+3. Open `browser/emerge.html` — identify visual clusters and isolated files
+4. Add new `[[policy.forbidden_dependencies]]` rules for any coupling you want to prohibit going forward
+5. Run `gdhealth health --root . --fail-on critical` — establish the baseline
+6. Add the CI step to enforce the baseline on future changes
+
+The goal is not to eliminate all findings immediately — it's to encode the rules that matter to your architecture, establish a passing baseline, and prevent regression.

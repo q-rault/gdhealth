@@ -1,0 +1,107 @@
+---
+title: Configuration
+description: All gdhealth.toml sections, fields, types, and defaults.
+---
+
+gdhealth reads its configuration from `gdhealth.toml` at the project root (or from the path given by `--config`). If no config file is found, built-in defaults are used — you can run gdhealth without any config file.
+
+## Full example
+
+```toml file="tools/gdhealth/tests/docs/gdhealth.example.toml" region="full-config"
+```
+
+---
+
+## `[project]`
+
+Optional. Rarely needed since `--root` overrides this at runtime.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `root` | string | `"."` | Project root path. Overridden by `--root` flag. |
+
+---
+
+## `[discovery]`
+
+Controls which files are discovered and analyzed.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `include` | string[] | `["**/*.gd"]` | Glob patterns for files to include |
+| `exclude` | string[] | `["addons/**", ".godot/**", "reports/**"]` | Glob patterns for files to exclude |
+
+Patterns prefixed with `!` inside an `include` list act as negations. Patterns are matched against project-relative paths.
+
+---
+
+## `[groups]`
+
+Named groups assign files to logical layers. Each key is a group name; the value is a list of glob patterns.
+
+```toml
+[groups]
+gameplay = ["*.gd", "!server/**", "!net/**"]
+net      = ["net/**"]
+server   = ["server/**"]
+```
+
+Files not matched by any group are labelled **ungrouped** in reports. Groups are referenced by name in `[policy]` forbidden dependency rules.
+
+If no groups are defined, all files are ungrouped and no forbidden dependency rules can fire.
+
+---
+
+## `[thresholds]`
+
+Complexity thresholds that drive policy findings. Each metric has a `_warn` and `_critical` pair — findings below warn are ignored, findings between warn and critical get severity `warning`, findings at or above critical get severity `critical`.
+
+The `warn` threshold must be ≤ the `critical` threshold or config validation fails.
+
+| Field | Type | Default |
+|---|---|---|
+| `file_lines_warn` | int | 500 |
+| `file_lines_critical` | int | 1000 |
+| `function_lines_warn` | int | 40 |
+| `function_lines_critical` | int | 80 |
+| `cyclomatic_warn` | int | 10 |
+| `cyclomatic_critical` | int | 15 |
+| `nesting_warn` | int | 4 |
+| `nesting_critical` | int | 6 |
+| `parameters_warn` | int | 5 |
+
+`parameters_warn` has no `_critical` counterpart — parameter count findings are always `warning`.
+
+---
+
+## `[policy]`
+
+### `allow_cycles`
+
+Dependency cycles whose files all match at least one of these glob patterns are suppressed (not emitted as findings).
+
+```toml
+[policy]
+allow_cycles = ["test/**", "tools/**"]
+```
+
+Leave empty to report all cycles.
+
+### `[[policy.forbidden_dependencies]]`
+
+Each entry defines a forbidden dependency rule. If a file in group `from` depends on a file in group `to`, a finding with the given severity is emitted.
+
+```toml
+[[policy.forbidden_dependencies]]
+from     = "server"
+to       = "gameplay"
+severity = "critical"
+```
+
+| Field | Type | Values |
+|---|---|---|
+| `from` | string | Group name defined in `[groups]` |
+| `to` | string | Group name defined in `[groups]` |
+| `severity` | string | `info`, `warning`, `critical` |
+
+Multiple rules are allowed. Each is independent — all matching rules fire for a given edge.
