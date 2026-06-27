@@ -30,7 +30,7 @@ jobs:
             archive: tar.gz
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -42,7 +42,7 @@ jobs:
         run: sudo apt-get install -y musl-tools
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -83,7 +83,7 @@ jobs:
           "ARCHIVE=$Archive" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gdhealth-${{ matrix.target }}
           path: ${{ env.ARCHIVE }}
@@ -95,7 +95,7 @@ jobs:
 
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
