@@ -12,7 +12,7 @@ description: Build and install gdhealth from source.
 From the repository root:
 
 ```sh
-cargo install --path tools/gdhealth
+cargo install --path .
 ```
 
 This compiles and installs the `gdhealth` binary into `~/.cargo/bin/`, which should already be on your `PATH` if you've used Cargo before.
@@ -20,7 +20,7 @@ This compiles and installs the `gdhealth` binary into `~/.cargo/bin/`, which sho
 Use `--force` to replace an existing installation:
 
 ```sh
-cargo install --path tools/gdhealth --force
+cargo install --path . --force
 ```
 
 ## Build without installing
@@ -28,10 +28,10 @@ cargo install --path tools/gdhealth --force
 If you only want the binary for local use:
 
 ```sh
-cargo build --release --manifest-path tools/gdhealth/Cargo.toml
+cargo build --release
 ```
 
-The binary is at `tools/gdhealth/target/release/gdhealth`.
+The binary is at `target/release/gdhealth`.
 
 ## Verify the installation
 

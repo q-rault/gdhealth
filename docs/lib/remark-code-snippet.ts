@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 // Paths are resolved from the repo root (process.cwd()), not from the MDX file.
-// Use: file="tools/gdhealth/tests/docs/gdhealth.example.toml" region="full-config"
+// Use: file="tests/docs/gdhealth.example.toml" region="full-config"
 const ROOT = process.cwd()
 
 function parseCodeMeta(meta: string): Record<string, string> {

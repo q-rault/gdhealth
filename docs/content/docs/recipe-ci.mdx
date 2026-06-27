@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install --path tools/gdhealth
+      - run: cargo install --path .
       - run: gdhealth health --root . --fail-on critical
       - uses: actions/upload-artifact@v4
         if: always()
@@ -65,8 +65,8 @@ To avoid rebuilding on every run, cache the Cargo registry:
     path: |
       ~/.cargo/registry
       ~/.cargo/git
-      tools/gdhealth/target
-    key: gdhealth-${{ hashFiles('tools/gdhealth/Cargo.lock') }}
+      target
+    key: gdhealth-${{ hashFiles('Cargo.lock') }}
 ```
 
 ## Reading the report in CI

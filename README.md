@@ -14,13 +14,13 @@
 Requires Rust 1.85+.
 
 ```sh
-cargo install --path tools/gdhealth
+cargo install --path .
 ```
 
 Or build without installing:
 
 ```sh
-cargo build --release --manifest-path tools/gdhealth/Cargo.toml
+cargo build --release
 ```
 
 ## Quickstart

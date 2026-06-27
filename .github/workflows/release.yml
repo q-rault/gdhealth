@@ -47,12 +47,12 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('tools/gdhealth/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} --locked --manifest-path tools/gdhealth/Cargo.toml
+        run: cargo build --release --target ${{ matrix.target }} --locked
 
       - name: Package (Unix)
         if: matrix.archive == 'tar.gz'
@@ -63,8 +63,8 @@ jobs:
           ARCHIVE="${PACKAGE_DIR}.tar.gz"
           rm -rf "${PACKAGE_DIR}"
           mkdir -p "${PACKAGE_DIR}"
-          cp "tools/gdhealth/target/${{ matrix.target }}/release/gdhealth" "${PACKAGE_DIR}/"
-          cp "tools/gdhealth/README.md" "${PACKAGE_DIR}/"
+          cp "target/${{ matrix.target }}/release/gdhealth" "${PACKAGE_DIR}/"
+          cp "README.md" "${PACKAGE_DIR}/"
           tar czf "${ARCHIVE}" "${PACKAGE_DIR}"
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
@@ -77,8 +77,8 @@ jobs:
           $Archive = "$PackageDir.zip"
           Remove-Item -Recurse -Force $PackageDir -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $PackageDir | Out-Null
-          Copy-Item "tools\gdhealth\target\${{ matrix.target }}\release\gdhealth.exe" "$PackageDir\"
-          Copy-Item "tools\gdhealth\README.md" $PackageDir
+          Copy-Item "target\${{ matrix.target }}\release\gdhealth.exe" "$PackageDir\"
+          Copy-Item "README.md" $PackageDir
           Compress-Archive -Path $PackageDir -DestinationPath $Archive
           "ARCHIVE=$Archive" | Out-File -FilePath $env:GITHUB_ENV -Append
 

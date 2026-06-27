@@ -1,5 +1,5 @@
 # Rust
-/tools/gdhealth/target/
+/target/
 
 # Reports (generated output, not source)
 /reports/

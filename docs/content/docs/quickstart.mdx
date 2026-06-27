@@ -6,7 +6,7 @@ description: Create a config, run gdhealth health, and read your first report.
 ## 1. Install
 
 ```sh
-cargo install --path tools/gdhealth
+cargo install --path .
 ```
 
 Requires Rust 1.85+. See [Installation](/docs/installation) for details.
@@ -15,7 +15,7 @@ Requires Rust 1.85+. See [Installation](/docs/installation) for details.
 
 The minimal config below discovers all `.gd` files and applies default thresholds:
 
-```toml file="tools/gdhealth/tests/docs/gdhealth.example.toml" region="minimal"
+```toml file="tests/docs/gdhealth.example.toml" region="minimal"
 ```
 
 For a full config with groups, thresholds, and policy rules, see [Configuration](/docs/configuration).
