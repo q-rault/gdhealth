@@ -15,9 +15,25 @@ pub mod policy;
 use crate::cli::{Cli, Command, OutputFormat};
 use crate::config::Config;
 use crate::error::Result;
+use crate::model::SCHEMA_VERSION;
 use clap::Parser;
 
+fn try_handle_probe(args: &[std::ffi::OsString]) -> bool {
+    match args.get(1).and_then(|arg| arg.to_str()) {
+        Some("--schema-version") | Some("schema-version") => {
+            println!("{SCHEMA_VERSION}");
+            true
+        }
+        _ => false,
+    }
+}
+
 pub fn run() -> Result<()> {
+    let args: Vec<_> = std::env::args_os().collect();
+    if try_handle_probe(&args) {
+        return Ok(());
+    }
+
     let cli = Cli::parse();
     let config = Config::load(cli.config.as_deref())?;
 

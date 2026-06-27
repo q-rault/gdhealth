@@ -13,6 +13,14 @@ gdhealth health --root <project_root> [--fail-on critical]
 
 `gdhealth health` is the canonical backend command. It produces the full report bundle in a single invocation and exposes the right exit-code semantics for CI.
 
+For compatibility checks, gdsuite may also probe:
+
+```sh
+gdhealth --version
+gdhealth --schema-version
+gdhealth schema-version
+```
+
 ## What gdsuite consumes
 
 gdsuite reads three artifacts from `gdhealth health`:

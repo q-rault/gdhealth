@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "gdhealth")]
+#[command(version = crate::model::TOOL_VERSION)]
 #[command(about = "Code-health analysis for Godot/GDScript repositories")]
 #[command(long_about = "gdhealth extracts dependency graphs, computes complexity metrics, evaluates \
     architecture policies, and bundles a health summary for CI and code review.\n\n\

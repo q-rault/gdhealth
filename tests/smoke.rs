@@ -46,6 +46,33 @@ fn health_help_succeeds() {
     );
 }
 
+#[test]
+fn version_probe_succeeds() {
+    let output = run_cargo_help(&["--version"]);
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains(env!("CARGO_PKG_VERSION")),
+        "version output should include package version"
+    );
+}
+
+#[test]
+fn schema_version_flag_probe_succeeds() {
+    let output = run_cargo_help(&["--schema-version"]);
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(text.trim(), "1");
+}
+
+#[test]
+fn schema_version_subcommand_probe_succeeds() {
+    let output = run_cargo_help(&["schema-version"]);
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(text.trim(), "1");
+}
+
 // ── bundle output test ───────────────────────────────────────────────────────
 
 #[test]

@@ -8,6 +8,14 @@ description: All gdhealth subcommands, flags, output formats, and exit codes.
 | Flag | Description |
 |---|---|
 | `--config <path>` | Path to `gdhealth.toml`. Defaults to `gdhealth.toml` in the current directory. If not found, built-in defaults are used. |
+| `--version` | Print the gdhealth binary version and exit 0. |
+| `--schema-version` | Print the public JSON schema version and exit 0. |
+
+The schema version probe is also available as a subcommand:
+
+```sh
+gdhealth schema-version
+```
 
 ## Subcommands
 

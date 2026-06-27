@@ -85,6 +85,14 @@ cat reports/code-health/summary.txt
 
 Each command accepts `--root <path>`, `--format <format>`, `--output <file>`, and `--fail-on <severity>`.
 
+For tooling integration, `gdhealth` also exposes stable probe commands:
+
+```sh
+gdhealth --version
+gdhealth --schema-version
+gdhealth schema-version
+```
+
 ## Output formats
 
 | Format         | `graph` | `metrics` | `policy` | `health` |
