@@ -1,0 +1,107 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+          - target: x86_64-apple-darwin
+            os: macos-13
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('tools/gdhealth/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --locked --manifest-path tools/gdhealth/Cargo.toml
+
+      - name: Package (Unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          PACKAGE_DIR="gdhealth-${VERSION}-${{ matrix.target }}"
+          ARCHIVE="${PACKAGE_DIR}.tar.gz"
+          rm -rf "${PACKAGE_DIR}"
+          mkdir -p "${PACKAGE_DIR}"
+          cp "tools/gdhealth/target/${{ matrix.target }}/release/gdhealth" "${PACKAGE_DIR}/"
+          cp "tools/gdhealth/README.md" "${PACKAGE_DIR}/"
+          tar czf "${ARCHIVE}" "${PACKAGE_DIR}"
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Package (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $Version = $env:GITHUB_REF_NAME
+          $PackageDir = "gdhealth-$Version-${{ matrix.target }}"
+          $Archive = "$PackageDir.zip"
+          Remove-Item -Recurse -Force $PackageDir -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $PackageDir | Out-Null
+          Copy-Item "tools\gdhealth\target\${{ matrix.target }}\release\gdhealth.exe" "$PackageDir\"
+          Copy-Item "tools\gdhealth\README.md" $PackageDir
+          Compress-Archive -Path $PackageDir -DestinationPath $Archive
+          "ARCHIVE=$Archive" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdhealth-${{ matrix.target }}
+          path: ${{ env.ARCHIVE }}
+
+  release:
+    name: Create GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
