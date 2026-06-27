@@ -1,7 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["."]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2026"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/q-rault/gdhealth"
+homepage = "https://github.com/q-rault/gdhealth"
+authors = ["Quentin Rault"]
+
 [package]
 name = "gdhealth"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Code-health CLI for Godot and GDScript repositories"
+readme = "README.md"
+keywords = ["godot", "gdscript", "cli", "code-health"]
+categories = ["command-line-utilities", "development-tools"]
 
 [lib]
 path = "src/lib.rs"
