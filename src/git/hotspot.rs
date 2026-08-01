@@ -6,23 +6,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
-const HOTSPOT_MIN_COMMITS_90D: usize = 3;
-const HOTSPOT_PERCENTILE_FLOOR: f64 = 0.75;
+const MIN_RECENT_COMMITS_FOR_HOTSPOT: usize = 3;
+const HOTSPOT_TOP_QUARTILE: f64 = 0.75;
 
 // Commit-subject classifier for "this commit fixed a bug". INCLUDE must
 // match and EXCLUDE must not, so routine chore/format/dependency-bump
 // commits that happen to mention "fix" in passing don't count.
-static FIX_INCLUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\bfix\b|\bbug\b|\bpatch\b|\bresolves?\b|closes?\s+#\d+|fixes?\s+#\d+")
+static FIX_SIGNAL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(fix|repair|resolve[ds]?|correct(?:ion|ed)?|hotfix|regression|defect|crash)\b|\bfix(?:es|ed)?\s+(?:#\d+|issue)")
         .expect("valid fix-include regex")
 });
-static FIX_EXCLUDE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\bmerge\b|\btypo\b|\bbump\b|\bdeps?\b|\bchore\b|\blint\b|\bformat\b|\bstyle\b|\bdocs?\b")
+static NON_DEFECT_SIGNAL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(merge|documentation|readme|spelling|format(?:ting)?|lint(?:ing)?|dependency|dependencies|version bump|release)\b")
         .expect("valid fix-exclude regex")
 });
 
 fn is_fix_commit(subject: &str) -> bool {
-    FIX_INCLUDE_RE.is_match(subject) && !FIX_EXCLUDE_RE.is_match(subject)
+    FIX_SIGNAL_RE.is_match(subject) && !NON_DEFECT_SIGNAL_RE.is_match(subject)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -109,12 +109,7 @@ pub fn compute_bus_factor(commits: &[CommitRecord]) -> (usize, Vec<String>) {
     }
 
     let mut sorted = counts.into_iter().collect::<Vec<_>>();
-    sorted.sort_by(|left, right| {
-        right
-            .1
-            .cmp(&left.1)
-            .then_with(|| left.0.cmp(&right.0))
-    });
+    sorted.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
 
     let threshold = total as f64 * 0.8;
     let mut cumulative = 0usize;
@@ -217,8 +212,8 @@ pub fn apply_percentiles(stats: &mut BTreeMap<String, MutableFileStats>) {
         } else {
             1.0 - (rank as f64 / (total - 1) as f64)
         };
-        let is_hotspot =
-            percentile >= HOTSPOT_PERCENTILE_FLOOR && commit_count_90d >= HOTSPOT_MIN_COMMITS_90D;
+        let is_hotspot = percentile >= HOTSPOT_TOP_QUARTILE
+            && commit_count_90d >= MIN_RECENT_COMMITS_FOR_HOTSPOT;
 
         if let Some(entry) = stats.get_mut(&path) {
             entry.churn_percentile = percentile;
@@ -232,7 +227,13 @@ mod tests {
     use super::*;
     use crate::git::log_walk::FileDelta;
 
-    fn commit(hash: &str, days_ago: i64, author: &str, subject: &str, files: &[(&str, usize, usize)]) -> CommitRecord {
+    fn commit(
+        hash: &str,
+        days_ago: i64,
+        author: &str,
+        subject: &str,
+        files: &[(&str, usize, usize)],
+    ) -> CommitRecord {
         CommitRecord {
             hash: hash.to_string(),
             unix_time: 1_700_000_000 - days_ago * 86_400,
@@ -274,9 +275,27 @@ mod tests {
         let known = BTreeSet::from(["f.gd".to_string()]);
         let config = GitConfig::default();
         let commits = vec![
-            commit("a", 10, "dev@example.com", "fix: crash on load", &[("f.gd", 2, 1)]),
-            commit("b", 10, "dev@example.com", "chore: bump deps", &[("f.gd", 1, 1)]),
-            commit("c", 400, "dev@example.com", "fix: old bug", &[("f.gd", 3, 0)]),
+            commit(
+                "a",
+                10,
+                "dev@example.com",
+                "fix: crash on load",
+                &[("f.gd", 2, 1)],
+            ),
+            commit(
+                "b",
+                10,
+                "dev@example.com",
+                "chore: bump deps",
+                &[("f.gd", 1, 1)],
+            ),
+            commit(
+                "c",
+                400,
+                "dev@example.com",
+                "fix: old bug",
+                &[("f.gd", 3, 0)],
+            ),
         ];
         let stats = compute_file_stats(&commits, &known, &config, 1_700_000_000);
         let entry = &stats["f.gd"];
@@ -291,7 +310,13 @@ mod tests {
         let mut config = GitConfig::default();
         config.co_change_max_files_per_commit = 2;
         let commits = vec![
-            commit("x", 0, "dev@example.com", "work", &[("a.gd", 1, 0), ("b.gd", 1, 0)]),
+            commit(
+                "x",
+                0,
+                "dev@example.com",
+                "work",
+                &[("a.gd", 1, 0), ("b.gd", 1, 0)],
+            ),
             commit(
                 "y",
                 1,

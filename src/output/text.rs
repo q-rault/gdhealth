@@ -1,5 +1,5 @@
 use crate::defect_validation::DefectValidationReport;
-use crate::git::risk::ChangeRisk;
+use crate::git::risk::CommitRiskScore;
 use crate::model::{
     CoChangePair, FileMetric, FunctionMetric, GitFileStats, GraphReport, HealthReport,
     MetricsReport, PolicyFinding, PolicyReport,
@@ -122,7 +122,10 @@ fn extend_duplication(lines: &mut Vec<String>, duplication: &crate::model::Dupli
         return;
     }
 
-    lines.push(format!("duplicate code blocks: {}", duplication.clones.len()));
+    lines.push(format!(
+        "duplicate code blocks: {}",
+        duplication.clones.len()
+    ));
     lines.extend(duplication.clones.iter().take(20).map(|clone| {
         format!(
             "- {}:{} <-> {}:{} ({} tokens)",
@@ -303,16 +306,17 @@ fn extend_cycles(lines: &mut Vec<String>, cycles: &[Vec<String>]) {
     );
 }
 
-pub fn render_risk(risk: &ChangeRisk) -> String {
+pub fn render_risk(risk: &CommitRiskScore) -> String {
     let mut lines = vec![
         format!("ref: {}", risk.ref_label),
         format!("risk score: {:.1}/10 ({})", risk.score, risk.level),
-        format!("warning: {}", risk.calibration_warning),
-        "drivers:".to_string(),
+        format!("reference commits: {}", risk.reference_commit_count),
+        format!("note: {}", risk.method_note),
+        "factors:".to_string(),
     ];
 
-    let mut sorted_drivers = risk.drivers.clone();
-    sorted_drivers.sort_by(|left, right| {
+    let mut sorted_factors = risk.factors.clone();
+    sorted_factors.sort_by(|left, right| {
         right
             .contribution
             .abs()
@@ -320,12 +324,12 @@ pub fn render_risk(risk: &ChangeRisk) -> String {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    lines.extend(sorted_drivers.iter().map(|driver| match driver.value {
+    lines.extend(sorted_factors.iter().map(|factor| match factor.value {
         Some(value) => format!(
-            "- {}: {value:.1} ({}, push: {:+.3})",
-            driver.feature, driver.label, driver.contribution
+            "- {}: {value:.1} ({}, weight: {:.3})",
+            factor.feature, factor.label, factor.contribution
         ),
-        None => format!("- {}: {}", driver.feature, driver.label),
+        None => format!("- {}: {}", factor.feature, factor.label),
     }));
 
     lines.join("\n")

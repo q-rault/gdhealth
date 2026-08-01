@@ -1,8 +1,7 @@
 //! Self-check: does gdhealth's own structural hotspot score actually line
-//! up with files that had real bugs? Mirrors repowise's
-//! `defect_accuracy.py` bottom-K precision/lift loop, adapted to
-//! gdhealth's data model — gdhealth has no unified 1-10 health score
-//! (deliberately not ported, see the maturity plan), so `file_hotspot_score`
+//! up with files that had real bugs? It uses a bottom-K precision/lift check
+//! adapted to gdhealth's data model — gdhealth has no unified 1-10 health
+//! score, so `file_hotspot_score`
 //! (already computed from complexity + coupling) stands in as the "how
 //! risky is this file" ranking signal, and prior-defect history comes from
 //! the git intelligence layer.
@@ -176,7 +175,9 @@ mod tests {
 
     #[test]
     fn reports_unavailable_when_git_is_unavailable() {
-        let files = (0..30).map(|i| file_metric(&format!("f{i}.gd"), i)).collect::<Vec<_>>();
+        let files = (0..30)
+            .map(|i| file_metric(&format!("f{i}.gd"), i))
+            .collect::<Vec<_>>();
         let git = GitIntelligenceReport {
             available: false,
             ..available_git(Vec::new())
@@ -187,7 +188,9 @@ mod tests {
 
     #[test]
     fn reports_unavailable_below_minimum_thresholds() {
-        let files = (0..10).map(|i| file_metric(&format!("f{i}.gd"), i)).collect::<Vec<_>>();
+        let files = (0..10)
+            .map(|i| file_metric(&format!("f{i}.gd"), i))
+            .collect::<Vec<_>>();
         let git = available_git((0..10).map(|i| git_file(&format!("f{i}.gd"), 0)).collect());
         let report = validate(&files, &git, DEFAULT_K);
         assert!(!report.available);

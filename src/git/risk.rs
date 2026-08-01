@@ -1,160 +1,164 @@
-//! Change-risk scoring for a commit or `base..head` range.
+//! Self-relative change-risk scoring for a commit or `base..head` range.
 //!
-//! Kamei-style diff-shape features (size, diffusion, author experience),
-//! scored with the exact calibrated constants published by repowise
-//! (`packages/core/.../change_risk/model.py`, 7-repo/5-language corpus,
-//! leave-one-repo-out AUC 0.772). Ported verbatim as a placeholder — these
-//! were never fit on a Godot/GDScript corpus, so every output is labeled
-//! uncalibrated. The scoring math itself is language-agnostic (pure
-//! diff-shape statistics), so the algorithm is trustworthy even though the
-//! specific coefficients are borrowed.
+//! The score compares a change's diff shape with this repository's recent
+//! history. It is a transparent heuristic, not a defect-prediction model.
 
 use super::exec::{GitError, run_git_text};
+use super::log_walk::{CommitRecord, walk_commits};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+const REFERENCE_SAMPLE_SIZE: usize = 150;
+
 #[derive(Debug, Clone)]
-pub struct ChangeFeatures {
-    pub la: f64,
-    pub ld: f64,
-    pub nf: f64,
-    pub nd: f64,
-    pub ns: f64,
+pub struct CommitChangeShape {
+    pub lines_added: f64,
+    pub lines_deleted: f64,
+    pub files_touched: f64,
+    pub directories_touched: f64,
+    pub subsystems_touched: f64,
     pub entropy: f64,
-    pub exp: Option<f64>,
-    pub author: String,
-    pub subject: String,
+    pub author_experience: Option<f64>,
     pub ref_label: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RiskDriver {
+pub struct RiskFactor {
     pub feature: String,
-    /// `None` when the feature is unknown for this change (e.g. author
-    /// experience with no resolvable git history) — serde_json would
-    /// reject a raw NaN, and `None` is also the more honest JSON shape.
     pub value: Option<f64>,
+    pub percentile: Option<f64>,
     pub contribution: f64,
     pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ChangeRisk {
+pub struct CommitRiskScore {
     pub score: f64,
-    pub probability: f64,
     pub level: String,
-    pub drivers: Vec<RiskDriver>,
+    pub factors: Vec<RiskFactor>,
     pub ref_label: String,
-    pub calibration_warning: &'static str,
+    pub reference_commit_count: usize,
+    pub method_note: &'static str,
 }
 
-const FEATURE_NAMES: [&str; 7] = ["la", "ld", "nf", "nd", "ns", "entropy", "exp"];
-const LOG1P: [bool; 7] = [true, true, true, true, true, false, true];
-const MEAN: [f64; 7] = [2.443, 1.723, 1.006, 0.795, 0.806, 0.537, 3.011];
-const STD: [f64; 7] = [1.414, 1.380, 0.465, 0.237, 0.285, 0.776, 2.270];
-const COEF: [f64; 7] = [1.1241, 0.0151, -0.1103, -0.0310, -0.0672, 0.1483, -0.0702];
-const INTERCEPT: f64 = -0.3797;
-
 /// Scores a commit (no `..` in `revspec`) or a `base..head` range.
-pub fn score_revspec(root: &Path, revspec: &str) -> Result<ChangeRisk, String> {
-    let features = if let Some((base, head)) = revspec.split_once("..") {
-        extract_range_features(root, base, head)
+pub fn score_revspec(root: &Path, revspec: &str) -> Result<CommitRiskScore, String> {
+    let target = if let Some((base, head)) = revspec.split_once("..") {
+        extract_range_shape(root, base, head)
     } else {
-        extract_commit_features(root, revspec)
+        extract_commit_shape(root, revspec)
     }
     .map_err(|error| error.to_string())?;
 
-    Ok(score_change(&features))
+    let reference = reference_shapes(root).map_err(|error| error.to_string())?;
+    Ok(score_commit(&target, &reference))
 }
 
-fn extract_commit_features(root: &Path, sha: &str) -> Result<ChangeFeatures, GitError> {
-    let meta = run_git_text(root, &["show", "-s", "--format=%an%x00%s", sha])?;
-    let (author, subject) = split_author_subject(&meta);
+fn extract_commit_shape(root: &Path, sha: &str) -> Result<CommitChangeShape, GitError> {
+    let meta = run_git_text(root, &["show", "-s", "--format=%ae", sha])?;
+    let author = meta.trim();
     let numstat = run_git_text(root, &["show", sha, "--numstat", "--format="])?;
-    let (la, ld, nf, dirs, subs, per_file) = accumulate_numstat(&numstat);
-
-    let parent = run_git_text(root, &["rev-parse", "--verify", "--quiet", &format!("{sha}^")])
-        .unwrap_or_default();
-    let parent = parent.trim();
-    let upto_ref = if parent.is_empty() { sha } else { parent };
-    let exp = author_experience(root, &author, upto_ref);
-
-    Ok(ChangeFeatures {
-        la,
-        ld,
-        nf,
-        nd: dirs.len() as f64,
-        ns: subs.len() as f64,
-        entropy: shannon_entropy(&per_file),
-        exp,
-        author,
-        subject,
-        ref_label: sha.to_string(),
-    })
+    let mut shape = shape_from_numstat(&numstat, sha.to_string());
+    let parent = run_git_text(
+        root,
+        &["rev-parse", "--verify", "--quiet", &format!("{sha}^")],
+    )
+    .unwrap_or_default();
+    shape.author_experience = author_experience(root, author, parent.trim());
+    Ok(shape)
 }
 
-fn extract_range_features(root: &Path, base: &str, head: &str) -> Result<ChangeFeatures, GitError> {
+fn extract_range_shape(root: &Path, base: &str, head: &str) -> Result<CommitChangeShape, GitError> {
     let revspec = format!("{base}..{head}");
     let numstat = run_git_text(root, &["diff", "--numstat", &revspec])?;
-    let (la, ld, nf, dirs, subs, per_file) = accumulate_numstat(&numstat);
-
-    let meta = run_git_text(root, &["show", "-s", "--format=%an%x00%s", head])?;
-    let (author, subject) = split_author_subject(&meta);
-    let exp = author_experience(root, &author, base);
-
-    Ok(ChangeFeatures {
-        la,
-        ld,
-        nf,
-        nd: dirs.len() as f64,
-        ns: subs.len() as f64,
-        entropy: shannon_entropy(&per_file),
-        exp,
-        author,
-        subject,
-        ref_label: revspec,
-    })
+    let meta = run_git_text(root, &["show", "-s", "--format=%ae", head])?;
+    let mut shape = shape_from_numstat(&numstat, revspec);
+    shape.author_experience = author_experience(root, meta.trim(), base);
+    Ok(shape)
 }
 
-fn accumulate_numstat(numstat: &str) -> (f64, f64, f64, BTreeSet<String>, BTreeSet<String>, Vec<f64>) {
-    let mut la = 0.0;
-    let mut ld = 0.0;
-    let mut nf = 0.0;
+fn reference_shapes(root: &Path) -> Result<Vec<CommitChangeShape>, GitError> {
+    let mut commits = walk_commits(root)?;
+    commits.reverse(); // oldest first, to derive experience available at each commit.
+    let mut experience_by_author = HashMap::<String, usize>::new();
+    let mut shapes = Vec::new();
+    for commit in commits {
+        let experience = experience_by_author
+            .get(&commit.author_email)
+            .copied()
+            .unwrap_or(0);
+        let mut shape = shape_from_record(&commit);
+        shape.author_experience = Some(experience as f64);
+        *experience_by_author.entry(commit.author_email).or_default() += 1;
+        shapes.push(shape);
+    }
+    shapes.reverse();
+    shapes.truncate(REFERENCE_SAMPLE_SIZE);
+    Ok(shapes)
+}
+
+fn shape_from_record(commit: &CommitRecord) -> CommitChangeShape {
+    let mut numstat = String::new();
+    for delta in &commit.files {
+        numstat.push_str(&format!(
+            "{}\t{}\t{}\n",
+            delta.added, delta.deleted, delta.path
+        ));
+    }
+    shape_from_numstat(&numstat, commit.hash.clone())
+}
+
+fn shape_from_numstat(numstat: &str, ref_label: String) -> CommitChangeShape {
+    let (lines_added, lines_deleted, files_touched, dirs, subs, per_file) =
+        accumulate_numstat(numstat);
+    CommitChangeShape {
+        lines_added,
+        lines_deleted,
+        files_touched,
+        directories_touched: dirs.len() as f64,
+        subsystems_touched: subs.len() as f64,
+        entropy: shannon_entropy(&per_file),
+        author_experience: None,
+        ref_label,
+    }
+}
+
+fn accumulate_numstat(
+    numstat: &str,
+) -> (f64, f64, f64, BTreeSet<String>, BTreeSet<String>, Vec<f64>) {
+    let mut lines_added = 0.0;
+    let mut lines_deleted = 0.0;
+    let mut files_touched = 0.0;
     let mut dirs = BTreeSet::new();
     let mut subs = BTreeSet::new();
     let mut per_file = Vec::new();
-
-    for row in numstat.lines() {
-        let row = row.trim();
-        if row.is_empty() {
-            continue;
-        }
+    for row in numstat.lines().map(str::trim).filter(|row| !row.is_empty()) {
         let mut parts = row.splitn(3, '\t');
-        let added_raw = parts.next().unwrap_or("0");
-        let deleted_raw = parts.next().unwrap_or("0");
+        let added: f64 = parts.next().unwrap_or("0").parse().unwrap_or(0.0);
+        let deleted: f64 = parts.next().unwrap_or("0").parse().unwrap_or(0.0);
         let path = parts.next().unwrap_or("").trim();
         if path.is_empty() {
             continue;
         }
-
-        let added: f64 = added_raw.parse().unwrap_or(0.0);
-        let deleted: f64 = deleted_raw.parse().unwrap_or(0.0);
-        la += added;
-        ld += deleted;
-        nf += 1.0;
-        let churn = added + deleted;
-        if churn > 0.0 {
-            per_file.push(churn);
+        lines_added += added;
+        lines_deleted += deleted;
+        files_touched += 1.0;
+        if added + deleted > 0.0 {
+            per_file.push(added + deleted);
         }
-
         let segments = path.split('/').collect::<Vec<_>>();
-        let dir = segments[..segments.len().saturating_sub(1)].join("/");
-        dirs.insert(dir);
+        dirs.insert(segments[..segments.len().saturating_sub(1)].join("/"));
         subs.insert(segments[0].to_string());
     }
-
-    (la, ld, nf, dirs, subs, per_file)
+    (
+        lines_added,
+        lines_deleted,
+        files_touched,
+        dirs,
+        subs,
+        per_file,
+    )
 }
 
 fn shannon_entropy(per_file: &[f64]) -> f64 {
@@ -162,218 +166,196 @@ fn shannon_entropy(per_file: &[f64]) -> f64 {
     if total <= 0.0 || per_file.len() < 2 {
         return 0.0;
     }
-
     -per_file
         .iter()
-        .filter(|&&value| value > 0.0)
-        .map(|&value| {
-            let share = value / total;
-            share * share.log2()
+        .filter(|&&v| v > 0.0)
+        .map(|&v| {
+            let p = v / total;
+            p * p.log2()
         })
         .sum::<f64>()
 }
 
 fn author_experience(root: &Path, author: &str, upto_ref: &str) -> Option<f64> {
-    if author.is_empty() {
-        return None;
+    if author.is_empty() || upto_ref.is_empty() {
+        return Some(0.0);
     }
-    let output = run_git_text(
+    run_git_text(
         root,
-        &["rev-list", "--count", "--author", author, "--no-merges", upto_ref],
+        &[
+            "rev-list",
+            "--count",
+            "--author",
+            author,
+            "--no-merges",
+            upto_ref,
+        ],
     )
-    .ok()?;
-    output.trim().parse::<f64>().ok()
+    .ok()?
+    .trim()
+    .parse()
+    .ok()
 }
 
-fn split_author_subject(text: &str) -> (String, String) {
-    let text = text.trim_end_matches('\n');
-    match text.split_once('\u{0}') {
-        Some((author, subject)) => (author.to_string(), subject.to_string()),
-        None => (text.to_string(), String::new()),
-    }
-}
-
-fn score_change(features: &ChangeFeatures) -> ChangeRisk {
-    let raw_values: [Option<f64>; 7] = [
-        Some(features.la),
-        Some(features.ld),
-        Some(features.nf),
-        Some(features.nd),
-        Some(features.ns),
-        Some(features.entropy),
-        features.exp,
+fn score_commit(target: &CommitChangeShape, reference: &[CommitChangeShape]) -> CommitRiskScore {
+    let features: [(&str, Option<f64>, f64, bool); 7] = [
+        ("lines_added", Some(target.lines_added), 0.24, false),
+        ("lines_deleted", Some(target.lines_deleted), 0.14, false),
+        ("files_touched", Some(target.files_touched), 0.20, false),
+        (
+            "directories_touched",
+            Some(target.directories_touched),
+            0.12,
+            false,
+        ),
+        (
+            "subsystems_touched",
+            Some(target.subsystems_touched),
+            0.10,
+            false,
+        ),
+        ("entropy", Some(target.entropy), 0.10, false),
+        ("author_experience", target.author_experience, 0.10, true),
     ];
-
-    let mut logit = INTERCEPT;
-    let mut drivers = Vec::with_capacity(FEATURE_NAMES.len());
-
-    for i in 0..FEATURE_NAMES.len() {
-        let name = FEATURE_NAMES[i];
-        match raw_values[i] {
-            None => drivers.push(RiskDriver {
-                feature: name.to_string(),
-                value: None,
-                contribution: 0.0,
-                label: format!("{name} (unknown)"),
-            }),
-            Some(raw) => {
-                let x = if LOG1P[i] { raw.ln_1p() } else { raw };
-                let std = if STD[i] != 0.0 { STD[i] } else { 1.0 };
-                let z = (x - MEAN[i]) / std;
-                let contribution = COEF[i] * z;
-                logit += contribution;
-                drivers.push(RiskDriver {
-                    feature: name.to_string(),
-                    value: Some(raw),
-                    contribution,
-                    label: feature_label(name, x >= MEAN[i]),
-                });
-            }
+    let mut total_weight = 0.0;
+    let mut weighted = 0.0;
+    let mut factors = Vec::new();
+    for (name, value, weight, invert) in features {
+        let distribution = reference
+            .iter()
+            .filter_map(|shape| value_for(shape, name))
+            .collect::<Vec<_>>();
+        let percentile = value.map(|value| percentile_rank(value, &distribution));
+        let adjusted = percentile.map(|p| if invert { 1.0 - p } else { p });
+        let contribution = adjusted.unwrap_or(0.0) * weight;
+        if adjusted.is_some() {
+            total_weight += weight;
+            weighted += contribution;
         }
+        factors.push(RiskFactor {
+            feature: name.to_string(),
+            value,
+            percentile,
+            contribution,
+            label: factor_label(name, percentile, invert),
+        });
     }
-
-    let probability = sigmoid(logit);
-    let score = (10.0 * probability * 10.0).round() / 10.0;
-
-    ChangeRisk {
+    let score = if total_weight == 0.0 {
+        0.0
+    } else {
+        (10.0 * weighted / total_weight * 10.0).round() / 10.0
+    };
+    CommitRiskScore {
         score,
-        probability,
         level: level_for(score),
-        drivers,
-        ref_label: features.ref_label.clone(),
-        calibration_warning: "coefficients are ported from repowise's generic (non-GDScript) corpus — treat as directional, not absolute",
+        factors,
+        ref_label: target.ref_label.clone(),
+        reference_commit_count: reference.len(),
+        method_note: "heuristic score relative to this repository's recent commit history; not a statistically validated defect predictor",
     }
 }
 
-fn sigmoid(z: f64) -> f64 {
-    if z >= 0.0 {
-        1.0 / (1.0 + (-z).exp())
-    } else {
-        let e = z.exp();
-        e / (1.0 + e)
+fn value_for(shape: &CommitChangeShape, name: &str) -> Option<f64> {
+    Some(match name {
+        "lines_added" => shape.lines_added,
+        "lines_deleted" => shape.lines_deleted,
+        "files_touched" => shape.files_touched,
+        "directories_touched" => shape.directories_touched,
+        "subsystems_touched" => shape.subsystems_touched,
+        "entropy" => shape.entropy,
+        "author_experience" => return shape.author_experience,
+        _ => return None,
+    })
+}
+
+fn percentile_rank(value: f64, distribution: &[f64]) -> f64 {
+    if distribution.len() <= 1 {
+        return 0.5;
     }
+    let below_or_equal = distribution
+        .iter()
+        .filter(|&&sample| sample <= value)
+        .count();
+    (below_or_equal.saturating_sub(1) as f64 / (distribution.len() - 1) as f64).clamp(0.0, 1.0)
+}
+
+fn factor_label(name: &str, percentile: Option<f64>, invert: bool) -> String {
+    let Some(percentile) = percentile else {
+        return format!("{name} unavailable");
+    };
+    let risk_percentile = if invert { 1.0 - percentile } else { percentile };
+    format!(
+        "{:.0}th percentile in recent history",
+        risk_percentile * 100.0
+    )
 }
 
 fn level_for(score: f64) -> String {
     if score >= 7.0 {
-        "high".to_string()
+        "high"
     } else if score >= 4.0 {
-        "moderate".to_string()
+        "moderate"
     } else {
-        "low".to_string()
+        "low"
     }
-}
-
-fn feature_label(name: &str, above_baseline: bool) -> String {
-    let (above, below) = match name {
-        "la" => ("more lines added than baseline", "fewer lines added than baseline"),
-        "ld" => ("more lines deleted than baseline", "fewer lines deleted than baseline"),
-        "nf" => ("more files than baseline", "fewer files than baseline"),
-        "nd" => ("more directories than baseline", "fewer directories than baseline"),
-        "ns" => ("more subsystems than baseline", "fewer subsystems than baseline"),
-        "entropy" => ("more scattered than baseline", "more focused than baseline"),
-        "exp" => (
-            "more experienced author than baseline",
-            "less familiar author than baseline",
-        ),
-        _ => (name, name),
-    };
-    if above_baseline { above } else { below }.to_string()
+    .to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ChangeFeatures, accumulate_numstat, score_change, shannon_entropy};
-
+    use super::{CommitChangeShape, accumulate_numstat, score_commit, shannon_entropy};
+    fn shape(size: f64, files: f64, exp: Option<f64>) -> CommitChangeShape {
+        CommitChangeShape {
+            lines_added: size,
+            lines_deleted: size / 2.0,
+            files_touched: files,
+            directories_touched: files,
+            subsystems_touched: files.min(3.0),
+            entropy: files.log2(),
+            author_experience: exp,
+            ref_label: "x".into(),
+        }
+    }
     #[test]
     fn accumulates_numstat_into_size_diffusion_and_per_file_churn() {
-        let numstat = "10\t2\tgameplay/core/foo.gd\n5\t0\tgameplay/combat/bar.gd\n0\t3\tnet/baz.gd\n";
-        let (la, ld, nf, dirs, subs, per_file) = accumulate_numstat(numstat);
-        assert_eq!(la, 15.0);
-        assert_eq!(ld, 5.0);
-        assert_eq!(nf, 3.0);
+        let (a, d, f, dirs, subs, per) = accumulate_numstat(
+            "10\t2\tgameplay/core/foo.gd\n5\t0\tgameplay/combat/bar.gd\n0\t3\tnet/baz.gd\n",
+        );
+        assert_eq!((a, d, f), (15.0, 5.0, 3.0));
         assert_eq!(dirs.len(), 3);
-        assert_eq!(subs.len(), 2); // "gameplay" and "net"
-        assert_eq!(per_file.len(), 3);
+        assert_eq!(subs.len(), 2);
+        assert_eq!(per.len(), 3);
     }
-
     #[test]
     fn entropy_is_zero_for_a_single_file_change() {
         assert_eq!(shannon_entropy(&[42.0]), 0.0);
     }
-
     #[test]
     fn entropy_is_positive_for_a_scattered_change() {
-        let entropy = shannon_entropy(&[10.0, 10.0, 10.0, 10.0]);
-        assert!(entropy > 1.9 && entropy < 2.1); // log2(4) == 2.0 for a uniform split
+        assert!(shannon_entropy(&[10.0, 10.0, 10.0, 10.0]) > 1.9);
     }
-
     #[test]
     fn a_small_focused_commit_scores_lower_than_a_large_scattered_one() {
-        let small = ChangeFeatures {
-            la: 3.0,
-            ld: 1.0,
-            nf: 1.0,
-            nd: 1.0,
-            ns: 1.0,
-            entropy: 0.0,
-            exp: Some(50.0),
-            author: "dev".to_string(),
-            subject: "small fix".to_string(),
-            ref_label: "abc".to_string(),
-        };
-        let large = ChangeFeatures {
-            la: 400.0,
-            ld: 300.0,
-            nf: 25.0,
-            nd: 10.0,
-            ns: 5.0,
-            entropy: 3.5,
-            exp: Some(1.0),
-            author: "newdev".to_string(),
-            subject: "big rewrite".to_string(),
-            ref_label: "def".to_string(),
-        };
-
-        let small_risk = score_change(&small);
-        let large_risk = score_change(&large);
+        let reference = (1..=20)
+            .map(|n| shape(n as f64 * 10.0, n as f64, Some(n as f64)))
+            .collect::<Vec<_>>();
         assert!(
-            large_risk.score > small_risk.score,
-            "large scattered commit ({}) should score higher than small focused one ({})",
-            large_risk.score,
-            small_risk.score
+            score_commit(&shape(3.0, 1.0, Some(50.0)), &reference).score
+                < score_commit(&shape(400.0, 25.0, Some(1.0)), &reference).score
         );
     }
-
     #[test]
-    fn unknown_author_experience_contributes_zero_not_a_penalty() {
-        let mut features = ChangeFeatures {
-            la: 10.0,
-            ld: 5.0,
-            nf: 2.0,
-            nd: 1.0,
-            ns: 1.0,
-            entropy: 1.0,
-            exp: Some(3.0),
-            author: "dev".to_string(),
-            subject: "work".to_string(),
-            ref_label: "abc".to_string(),
-        };
-        let with_exp = score_change(&features);
-        features.exp = None;
-        let without_exp = score_change(&features);
-
-        let exp_driver = with_exp
-            .drivers
+    fn unknown_author_experience_is_reported_without_changing_other_factors() {
+        let reference = (1..=5)
+            .map(|n| shape(n as f64, n as f64, Some(n as f64)))
+            .collect::<Vec<_>>();
+        let risk = score_commit(&shape(3.0, 2.0, None), &reference);
+        let factor = risk
+            .factors
             .iter()
-            .find(|driver| driver.feature == "exp")
-            .expect("exp driver present");
-        let unknown_driver = without_exp
-            .drivers
-            .iter()
-            .find(|driver| driver.feature == "exp")
-            .expect("exp driver present");
-        assert_eq!(unknown_driver.contribution, 0.0);
-        assert_ne!(exp_driver.contribution, 0.0);
+            .find(|factor| factor.feature == "author_experience")
+            .unwrap();
+        assert!(factor.percentile.is_none());
+        assert_eq!(factor.contribution, 0.0);
     }
 }

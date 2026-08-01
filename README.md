@@ -121,10 +121,8 @@ This is always on when the project is a git repository; pass `--no-git` or set `
 in `gdhealth.toml` to skip it.
 
 `gdhealth risk <revspec>` scores a single commit or a `base..head` range from diff shape alone (size,
-diffusion across files/directories, author experience) using calibration coefficients published by
-[repowise](https://github.com/repowise-dev/repowise) as a placeholder. **These are not calibrated for
-GDScript/Godot** — treat the score as directional, not absolute, until a Godot-specific defect corpus
-exists to recalibrate against.
+diffusion across files/directories, author experience), compared percentile-wise with this repository's
+recent commits. It is a transparent heuristic to focus review, not a statistically validated defect predictor.
 
 `gdhealth validate-defects` checks whether the existing structural hotspot score actually correlates
 with files that had real bugs (via the git prior-defect signal above), and prints "insufficient data"
@@ -135,7 +133,7 @@ rather than a misleading number on small or young repositories.
 The git intelligence layer, `risk`, `validate-defects`, duplicate-code detection, and the
 `suggested_fix` field on cycle/split-file findings are new and still settling — treat their exact
 fields as informational rather than a stable API surface (see [schema reference](docs/content/docs/schema-reference.mdx)).
-In particular: `gdhealth risk`'s coefficients are an explicit placeholder (see above), and Split File's
+In particular: `gdhealth risk` is a repository-relative heuristic (see above), and Split File's
 community-detection heuristic is intentionally conservative — it currently emits no suggestion on
 codebases where the reused Louvain-style optimizer fragments a file into many small communities
 rather than 2-6 cohesive ones, since no suggestion is better than an unhelpful 13-way split.

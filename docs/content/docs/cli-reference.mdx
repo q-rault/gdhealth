@@ -112,9 +112,9 @@ findings may carry a `suggested_fix`. See [Schema Reference](/docs/schema-refere
 
 ### `gdhealth risk`
 
-Score a git commit or `base..head` range for defect risk from diff shape alone (size, diffusion,
-author experience). **Not calibrated for GDScript** — the coefficients are ported from repowise's
-generic corpus as a placeholder; treat the score as directional, not absolute.
+Score a git commit or `base..head` range from diff shape alone (size, diffusion, author experience).
+Each feature is ranked against this repository's recent commit history and combined into a transparent
+heuristic score. It helps focus review; it is not a statistically validated defect predictor.
 
 ```sh
 gdhealth risk [revspec] --root <path> [--format json|text]

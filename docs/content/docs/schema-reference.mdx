@@ -221,16 +221,17 @@ Not part of the `health` bundle — a standalone command, see [CLI Reference](/d
 ```
 {
   score: number        // 0-10
-  probability: number  // calibrated logistic probability
   level: string        // "low" | "moderate" | "high"
-  drivers: RiskDriver[]
+  factors: RiskFactor[]
   ref_label: string
-  calibration_warning: string  // always present — not calibrated for GDScript
+  reference_commit_count: number
+  method_note: string
 }
 ```
 
-`RiskDriver`: `{ feature, value: number | null, contribution, label }` — `value` is `null` when the
-feature (currently only author experience) is unknown for this change.
+`RiskFactor`: `{ feature, value: number | null, percentile: number | null, contribution, label }`.
+`percentile` is the feature's rank within the recent repository history; `value` and `percentile` are
+`null` when a feature (currently only author experience) is unavailable for the change.
 
 ---
 

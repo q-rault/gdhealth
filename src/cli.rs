@@ -5,9 +5,11 @@ use std::path::PathBuf;
 #[command(name = "gdhealth")]
 #[command(version = crate::model::TOOL_VERSION)]
 #[command(about = "Code-health analysis for Godot/GDScript repositories")]
-#[command(long_about = "gdhealth extracts dependency graphs, computes complexity metrics, evaluates \
+#[command(
+    long_about = "gdhealth extracts dependency graphs, computes complexity metrics, evaluates \
     architecture policies, and bundles a health summary for CI and code review.\n\n\
-    Run `gdhealth health --root .` to generate the full report bundle at reports/code-health/.")]
+    Run `gdhealth health --root .` to generate the full report bundle at reports/code-health/."
+)]
 pub struct Cli {
     #[arg(
         long,
@@ -53,8 +55,7 @@ pub enum Command {
     /// Score a git commit or base..head range for defect risk from diff shape alone.
     ///
     /// Supports --format: json | text. Default output: stdout.
-    /// Uses repowise's published calibration coefficients as a placeholder —
-    /// NOT calibrated for GDScript. Treat the score as directional, not absolute.
+    /// Relative to this repository's recent history; heuristic only.
     Risk(RiskOptions),
 
     /// Self-check: do the lowest-scoring files by hotspot actually carry
