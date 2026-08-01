@@ -15,6 +15,7 @@ pub mod model;
 pub mod output;
 pub mod parser;
 pub mod policy;
+pub mod refactoring;
 
 use crate::cli::{Cli, Command, OutputFormat};
 use crate::config::Config;

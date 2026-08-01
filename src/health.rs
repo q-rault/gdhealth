@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::fs;
 use crate::git;
 use crate::graph::build_graph;
-use crate::isolate::isolate;
+use crate::isolate::{isolate, isolate_or};
 use crate::metrics::compute_metrics;
 use crate::model::{
     GitIntelligenceReport, GraphReport, HealthReport, HealthSummary, MetricsReport,
@@ -12,6 +12,7 @@ use crate::model::{
 };
 use crate::output::{browser, dot, json, text};
 use crate::policy::collect_findings;
+use crate::refactoring::{break_cycle, split_file};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -29,8 +30,26 @@ pub fn build_health_artifacts(
 ) -> Result<HealthArtifacts> {
     let graph = build_graph(config, options)?;
     let metrics = compute_metrics(config, options)?;
-    let policy_findings = collect_findings(config, &graph, &metrics)?;
+    let mut policy_findings = collect_findings(config, &graph, &metrics)?;
     let cross_group_dependencies = collect_cross_group_dependencies(&graph);
+
+    let findings_before_break_cycle = policy_findings.clone();
+    policy_findings = isolate_or("break-cycle", findings_before_break_cycle.clone(), || {
+        let mut findings = findings_before_break_cycle.clone();
+        break_cycle::annotate(&mut findings, &graph, &config.refactoring);
+        findings
+    });
+
+    let split_file_findings = isolate_or("split-file", Vec::new(), || {
+        split_file::detect(
+            options.root.as_path(),
+            &graph,
+            &metrics,
+            &config.thresholds,
+            &config.refactoring,
+        )
+    });
+    policy_findings.extend(split_file_findings);
 
     let git_report = if config.git.enabled && !options.no_git {
         isolate("git-intelligence", || {

@@ -110,6 +110,7 @@ fn evaluate_forbidden_dependencies(
                     file: Some(edge.from.clone()),
                     line: Some(edge.line),
                     related_files: vec![edge.from.clone(), edge.to.clone()],
+                    suggested_fix: None,
                 });
             }
         }
@@ -143,6 +144,7 @@ fn evaluate_file_thresholds(
                 file: Some(file.file.clone()),
                 line: None,
                 related_files: vec![file.file.clone()],
+                suggested_fix: None,
             });
         }
     }
@@ -176,6 +178,7 @@ fn evaluate_function_thresholds(
                 file: Some(function.file.clone()),
                 line: Some(function.start_line),
                 related_files: vec![function.file.clone()],
+                suggested_fix: None,
             });
         }
 
@@ -198,6 +201,7 @@ fn evaluate_function_thresholds(
                 file: Some(function.file.clone()),
                 line: Some(function.start_line),
                 related_files: vec![function.file.clone()],
+                suggested_fix: None,
             });
         }
 
@@ -220,6 +224,7 @@ fn evaluate_function_thresholds(
                 file: Some(function.file.clone()),
                 line: Some(function.start_line),
                 related_files: vec![function.file.clone()],
+                suggested_fix: None,
             });
         }
 
@@ -237,6 +242,7 @@ fn evaluate_function_thresholds(
                 file: Some(function.file.clone()),
                 line: Some(function.start_line),
                 related_files: vec![function.file.clone()],
+                suggested_fix: None,
             });
         }
     }
@@ -275,6 +281,7 @@ fn evaluate_cycles(
             file: cycle.first().cloned(),
             line: None,
             related_files: cycle.clone(),
+            suggested_fix: None,
         });
     }
 
@@ -503,6 +510,7 @@ mod tests {
                 file: None,
                 line: None,
                 related_files: vec![],
+                suggested_fix: None,
             },
             PolicyFinding {
                 rule_id: "y".to_string(),
@@ -511,6 +519,7 @@ mod tests {
                 file: None,
                 line: None,
                 related_files: vec![],
+                suggested_fix: None,
             },
         ];
 

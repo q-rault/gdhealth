@@ -339,7 +339,7 @@ fn dependency_kind_rank(kind: &DependencyKind) -> usize {
     }
 }
 
-fn find_cycles(files: &[ProjectFile], edges: &[DependencyEdge]) -> Vec<Vec<String>> {
+pub(crate) fn find_cycles(files: &[ProjectFile], edges: &[DependencyEdge]) -> Vec<Vec<String>> {
     let known_files = files
         .iter()
         .map(|file| file.path.clone())

@@ -26,6 +26,15 @@ static CONTROL_FLOW_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*(if|elif|else|for|while|match)\b").expect("valid control-flow regex")
 });
 
+static CLASS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid class regex")
+});
+
+static PROPERTY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:var|const)\s+([A-Za-z_][A-Za-z0-9_]*)")
+        .expect("valid property regex")
+});
+
 pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<MetricsReport> {
     let graph = build_graph(config, options)?;
     let root = options.root.as_path();
@@ -322,6 +331,91 @@ fn find_function_headers(lines: &[&str]) -> Vec<FunctionHeader> {
     headers
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SymbolKind {
+    Function,
+    InnerClass,
+    Signal,
+    Property,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SymbolSpan {
+    #[allow(dead_code)] // read by tests and reserved for future weighting
+    pub kind: SymbolKind,
+    pub name: String,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+/// Top-level (indentation-0) symbol spans in a file: functions, inner
+/// classes, signals, and var/const properties — the substrate for the
+/// Split File refactoring suggestion. Reuses the same header-detection and
+/// end-line inference as `find_function_headers`, generalized from one
+/// symbol kind to four.
+pub(crate) fn find_top_level_symbol_spans(lines: &[&str]) -> Vec<SymbolSpan> {
+    struct RawHeader {
+        kind: SymbolKind,
+        name: String,
+        start_line: usize,
+    }
+
+    let mut headers = Vec::<RawHeader>::new();
+
+    for (index, line) in lines.iter().enumerate() {
+        if indentation_width(line) != 0 {
+            continue;
+        }
+        let code = strip_comments(line);
+        let start_line = index + 1;
+
+        if let Some(captures) = FUNC_START_RE.captures(code) {
+            headers.push(RawHeader {
+                kind: SymbolKind::Function,
+                name: captures.get(1).map_or_else(String::new, |m| m.as_str().to_string()),
+                start_line,
+            });
+        } else if let Some(captures) = CLASS_RE.captures(code) {
+            headers.push(RawHeader {
+                kind: SymbolKind::InnerClass,
+                name: captures.get(1).map_or_else(String::new, |m| m.as_str().to_string()),
+                start_line,
+            });
+        } else if let Some(captures) = SIGNAL_RE.captures(code) {
+            headers.push(RawHeader {
+                kind: SymbolKind::Signal,
+                name: captures.get(1).map_or_else(String::new, |m| m.as_str().to_string()),
+                start_line,
+            });
+        } else if let Some(captures) = PROPERTY_RE.captures(code) {
+            headers.push(RawHeader {
+                kind: SymbolKind::Property,
+                name: captures.get(1).map_or_else(String::new, |m| m.as_str().to_string()),
+                start_line,
+            });
+        }
+    }
+
+    let total_lines = lines.len();
+    headers
+        .iter()
+        .enumerate()
+        .filter(|(_, header)| !header.name.is_empty())
+        .map(|(index, header)| {
+            let end_line = headers
+                .get(index + 1)
+                .map(|next| next.start_line.saturating_sub(1))
+                .unwrap_or(total_lines);
+            SymbolSpan {
+                kind: header.kind,
+                name: header.name.clone(),
+                start_line: header.start_line,
+                end_line,
+            }
+        })
+        .collect()
+}
+
 fn determine_function_end_line(
     index: usize,
     headers: &[FunctionHeader],
@@ -487,7 +581,8 @@ fn strip_comments(line: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_file, compute_file_hotspot_score, compute_function_hotspot_score, count_parameters,
+        SymbolKind, analyze_file, compute_file_hotspot_score, compute_function_hotspot_score,
+        count_parameters, find_top_level_symbol_spans,
     };
     use crate::model::FunctionMetric;
 
@@ -555,5 +650,38 @@ static func helper(a: int, b: int = 2) -> int:
         ];
 
         assert_eq!(compute_file_hotspot_score(&functions, 2, 3, 1), 61);
+    }
+
+    #[test]
+    fn finds_top_level_symbol_spans_across_kinds_and_skips_nested_lines() {
+        let content = r#"extends RefCounted
+
+signal hp_changed(current: int)
+
+@export var max_hp: int = 100
+
+func _ready() -> void:
+    if true:
+        var local_only = 1
+        print(local_only)
+
+class Inner:
+    var nested_field = 1
+"#;
+        let lines = content.lines().collect::<Vec<_>>();
+        let spans = find_top_level_symbol_spans(&lines);
+        let kinds = spans.iter().map(|s| (s.kind, s.name.as_str())).collect::<Vec<_>>();
+
+        assert_eq!(
+            kinds,
+            vec![
+                (SymbolKind::Signal, "hp_changed"),
+                (SymbolKind::Property, "max_hp"),
+                (SymbolKind::Function, "_ready"),
+                (SymbolKind::InnerClass, "Inner"),
+            ]
+        );
+        // `local_only` (indented, inside _ready) must not appear as a top-level span.
+        assert!(!spans.iter().any(|s| s.name == "local_only"));
     }
 }

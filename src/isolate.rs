@@ -27,6 +27,23 @@ where
     }
 }
 
+/// Same fault isolation as `isolate`, for callers whose result type has no
+/// natural "unavailable" variant (e.g. `Vec<PolicyFinding>`) — falls back
+/// to a caller-supplied `default` on panic instead of `T::unavailable`.
+pub fn isolate_or<T, F>(name: &str, default: T, f: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    match panic::catch_unwind(AssertUnwindSafe(f)) {
+        Ok(value) => value,
+        Err(payload) => {
+            let reason = panic_message(payload);
+            eprintln!("gdhealth: {name} failed and was disabled for this run: {reason}");
+            default
+        }
+    }
+}
+
 fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         message.to_string()

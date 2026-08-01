@@ -199,6 +199,24 @@ pub struct PolicyFinding {
     pub file: Option<String>,
     pub line: Option<usize>,
     pub related_files: Vec<String>,
+    /// Present only when a refactoring detector has a concrete, gated
+    /// suggestion for this finding (e.g. which edge to cut, how to split a
+    /// file). Absent by default so existing JSON consumers see no shape
+    /// change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_fix: Option<RefactorSuggestion>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind")]
+pub enum RefactorSuggestion {
+    BreakCycle {
+        cut_edges: Vec<(String, String)>,
+    },
+    SplitFile {
+        proposed_groups: Vec<Vec<String>>,
+        modularity: f64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
