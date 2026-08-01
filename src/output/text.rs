@@ -1,6 +1,6 @@
 use crate::model::{
-    FileMetric, FunctionMetric, GraphReport, HealthReport, MetricsReport, PolicyFinding,
-    PolicyReport,
+    CoChangePair, FileMetric, FunctionMetric, GitFileStats, GraphReport, HealthReport,
+    MetricsReport, PolicyFinding, PolicyReport,
 };
 
 pub fn render_graph(report: &GraphReport) -> String {
@@ -143,6 +143,14 @@ pub fn render_health(report: &HealthReport) -> String {
     extend_cross_group_dependencies(&mut lines, &report.cross_group_dependencies);
     extend_cycles(&mut lines, &report.cycles);
     extend_policy_findings(&mut lines, &report.policy_findings);
+    extend_git_signals(
+        &mut lines,
+        report.git_available,
+        report.git_unavailable_reason.as_deref(),
+        report.repo_bus_factor,
+        &report.top_churn_files,
+        &report.top_co_changes,
+    );
 
     lines.join("\n")
 }
@@ -171,6 +179,14 @@ pub fn render_health_bundle_summary(
     extend_cross_group_dependencies(&mut lines, &health.cross_group_dependencies);
     extend_cycles(&mut lines, &health.cycles);
     extend_policy_findings(&mut lines, &policy.findings);
+    extend_git_signals(
+        &mut lines,
+        health.git_available,
+        health.git_unavailable_reason.as_deref(),
+        health.repo_bus_factor,
+        &health.top_churn_files,
+        &health.top_co_changes,
+    );
 
     if !graph.parser_warnings.is_empty() {
         lines.push("parser warnings:".to_string());
@@ -263,6 +279,54 @@ fn extend_cycles(lines: &mut Vec<String>, cycles: &[Vec<String>]) {
             .iter()
             .map(|cycle| format!("- {}", cycle.join(" -> "))),
     );
+}
+
+fn extend_git_signals(
+    lines: &mut Vec<String>,
+    git_available: bool,
+    git_unavailable_reason: Option<&str>,
+    repo_bus_factor: usize,
+    top_churn_files: &[GitFileStats],
+    top_co_changes: &[CoChangePair],
+) {
+    lines.push("git signals:".to_string());
+
+    if !git_available {
+        let reason = git_unavailable_reason.unwrap_or("unknown reason");
+        lines.push(format!("- unavailable: {reason}"));
+        return;
+    }
+
+    lines.push(format!("- repo bus factor: {repo_bus_factor}"));
+
+    if !top_churn_files.is_empty() {
+        lines.push("- most active files (90d):".to_string());
+        lines.extend(top_churn_files.iter().map(|file| {
+            let owner = file
+                .ownership
+                .first()
+                .map(|share| format!("{} ({:.0}%)", share.author_email, share.share * 100.0))
+                .unwrap_or_else(|| "unknown".to_string());
+            format!(
+                "  - {} (hotspot: {:.1}, commits/90d: {}, prior defects: {}, owner: {})",
+                file.file,
+                file.temporal_hotspot_score,
+                file.commit_count_90d,
+                file.prior_defect_count,
+                owner
+            )
+        }));
+    }
+
+    if !top_co_changes.is_empty() {
+        lines.push("- co-change highlights:".to_string());
+        lines.extend(top_co_changes.iter().map(|pair| {
+            format!(
+                "  - {} <-> {} (weight: {:.2})",
+                pair.file_a, pair.file_b, pair.weight
+            )
+        }));
+    }
 }
 
 fn extend_policy_findings(lines: &mut Vec<String>, findings: &[PolicyFinding]) {

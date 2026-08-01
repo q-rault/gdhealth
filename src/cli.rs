@@ -95,4 +95,11 @@ pub struct CommandOptions {
         help = "Exit 1 if any finding is at or above this severity. Values: info, warning, critical"
     )]
     pub fail_on: Option<String>,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Skip git-derived signals (churn, ownership, co-change) even if [git] enabled = true in config"
+    )]
+    pub no_git: bool,
 }

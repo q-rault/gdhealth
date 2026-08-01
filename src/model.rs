@@ -197,4 +197,71 @@ pub struct HealthReport {
     pub cycles: Vec<Vec<String>>,
     pub policy_findings: Vec<PolicyFinding>,
     pub cross_group_dependencies: Vec<String>,
+    pub git_available: bool,
+    pub git_unavailable_reason: Option<String>,
+    pub git_shallow_repository: bool,
+    pub repo_bus_factor: usize,
+    pub top_churn_files: Vec<GitFileStats>,
+    pub top_co_changes: Vec<CoChangePair>,
+}
+
+// ── Git intelligence (available but not yet a stable API surface, same
+// posture as entity_scan when it was introduced) ─────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitOwnershipShare {
+    pub author_email: String,
+    pub share: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitFileStats {
+    pub file: String,
+    pub commit_count_total: usize,
+    pub commit_count_90d: usize,
+    pub commit_count_30d: usize,
+    pub lines_added_90d: usize,
+    pub lines_deleted_90d: usize,
+    pub temporal_hotspot_score: f64,
+    pub change_entropy: f64,
+    pub prior_defect_count: usize,
+    pub ownership: Vec<GitOwnershipShare>,
+    pub churn_percentile: f64,
+    pub is_churn_hotspot: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CoChangePair {
+    pub file_a: String,
+    pub file_b: String,
+    pub weight: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitIntelligenceReport {
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+    pub shallow_repository: bool,
+    pub anchor_commit_unix_time: Option<i64>,
+    pub repo_bus_factor: usize,
+    pub repo_bus_factor_contributors: Vec<String>,
+    pub files: Vec<GitFileStats>,
+    pub co_change_pairs: Vec<CoChangePair>,
+    pub warnings: Vec<String>,
+}
+
+impl crate::isolate::Diagnosable for GitIntelligenceReport {
+    fn unavailable(reason: String) -> Self {
+        Self {
+            available: false,
+            unavailable_reason: Some(reason),
+            shallow_repository: false,
+            anchor_commit_unix_time: None,
+            repo_bus_factor: 0,
+            repo_bus_factor_contributors: Vec::new(),
+            files: Vec::new(),
+            co_change_pairs: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
 }

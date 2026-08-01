@@ -4,6 +4,7 @@ pub mod config;
 pub mod discovery;
 pub mod error;
 pub mod fs;
+pub mod git;
 pub mod graph;
 pub mod health;
 pub mod isolate;
