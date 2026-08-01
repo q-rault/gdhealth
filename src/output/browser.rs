@@ -963,6 +963,15 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       align-items: center;
       justify-content: space-between;
     }}
+    .has-tooltip {{ position: relative; cursor: help; border-bottom: 1px dotted var(--text-3); }}
+    .has-tooltip::after {{
+      content: attr(data-tooltip); position: absolute; z-index: 20; left: 0; bottom: calc(100% + 8px);
+      width: min(260px, 75vw); padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 7px;
+      background: #24242B; color: var(--text); font-size: 11px; font-weight: 400; line-height: 1.45;
+      letter-spacing: 0; text-transform: none; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+      opacity: 0; pointer-events: none; transform: translateY(3px); transition: opacity .14s ease, transform .14s ease;
+    }}
+    .has-tooltip:hover::after, .has-tooltip:focus-visible::after {{ opacity: 1; transform: translateY(0); }}
     .section-aside {{
       font-size: 10px;
       font-weight: 400;
@@ -1344,27 +1353,27 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         <div class="divider"></div>
         <div class="section" style="flex:1;min-height:0;min-height:140px;">
           <div class="section-label">
-            Policy findings
+            <span class="has-tooltip" data-tooltip="Rules that exceed configured architecture or complexity thresholds. Critical findings need immediate attention; warnings should be reviewed.">Policy findings</span>
             <span class="section-aside" id="policy-count-aside"></span>
           </div>
           <div id="policy-findings" class="finding-list" style="overflow-y:auto;flex:1;"></div>
         </div>
         <div class="divider"></div>
         <div class="section">
-          <div class="section-label">Hot functions</div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Functions with the highest structural hotspot score: a combination of size, complexity, and dependency coupling.">Hot functions</span></div>
           <div id="hot-functions" class="fn-list"></div>
         </div>
         <div class="divider"></div>
         <div class="section">
-          <div class="section-label">Git signals</div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="History-derived signals: recent change frequency, ownership concentration, defect-shaped commits, and co-change patterns.">Git signals</span></div>
           <div id="git-insights" class="fn-list"></div>
         </div>
         <div class="section">
-          <div class="section-label">Duplicate code</div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Similar normalized code blocks. Variable names are ignored so copy-paste variants remain visible.">Duplicate code</span></div>
           <div id="duplicate-insights" class="fn-list"></div>
         </div>
         <div class="section">
-          <div class="section-label">Refactoring suggestions</div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Concrete, conservative suggestions generated from cycles and cohesive clusters inside large files.">Refactoring suggestions</span></div>
           <div id="refactor-insights" class="fn-list"></div>
         </div>
       </div>
@@ -1379,6 +1388,12 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       entity_result_dependency_graph: 'Entity dependencies',
       entity_result_inheritance_graph: 'Entity inheritance',
       entity_result_complete_graph: 'Entity complete'
+    }};
+    const graphTypeDescriptions = {{
+      file_result_dependency_graph: 'File dependencies: imports, preloads, loads, and inheritance links between script files.',
+      entity_result_dependency_graph: 'Entity dependencies: references between discovered classes and top-level code entities.',
+      entity_result_inheritance_graph: 'Entity inheritance: extends relationships between classes.',
+      entity_result_complete_graph: 'Entity complete: dependency and inheritance relationships combined in one view.'
     }};
 
     const W = 960, H = 720;
@@ -1445,9 +1460,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       statsEl.innerHTML = [
         ['Files', stats.node_count, 'Source files analyzed in this graph.'],
         ['Edges', stats.edge_count, 'Dependency connections between files.'],
-        ['Clusters', stats.community_count, 'Communities detected by Louvain clustering.'],
-        ['SLOC', stats.total_sloc.toLocaleString(), 'Source lines of code across all files.'],
-      ].map(([l,v,tip]) => `<div class="stat-card" title="${{tip}}"><div class="stat-label">${{l}}</div><div class="stat-value">${{v}}</div></div>`).join('');
+        ['Clusters', stats.community_count, 'Communities detected by Louvain clustering: files that are more connected to each other than to the rest of the project.'],
+        ['SLOC', stats.total_sloc.toLocaleString(), 'Source lines of code: physical lines in analyzed scripts, excluding non-code project assets.'],
+      ].map(([l,v,tip]) => `<div class="stat-card"><div class="stat-label has-tooltip" data-tooltip="${{tip}}">${{l}}</div><div class="stat-value">${{v}}</div></div>`).join('');
 
       badgesEl.innerHTML = [
         ps.critical_count > 0 ? `<span class="badge badge-red"><span class="badge-dot"></span>Critical ${{ps.critical_count}}</span>` : '',
@@ -1512,11 +1527,11 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         <div class="node-path">${{node.absolute_name}}</div>
         <div class="metric-grid">
           <div class="metric-card" title="Total lines in this file."><div class="metric-label">Lines</div><div class="metric-value">${{node.line_count}}</div></div>
-          <div class="metric-card" title="Fan-in: how many files import this one. High = widely used, risky to change."><div class="metric-label">Fan-in</div><div class="metric-value">${{node.metric_fan_in_dependency_graph}}</div></div>
-          <div class="metric-card" title="Fan-out: how many files this one imports. High = too many responsibilities."><div class="metric-label">Fan-out</div><div class="metric-value">${{node.metric_fan_out_dependency_graph}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Fan-in: how many analyzed files depend on this one. High fan-in means a widely reused, potentially sensitive component.">Fan-in</div><div class="metric-value">${{node.metric_fan_in_dependency_graph}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Fan-out: how many analyzed files this one depends on. High fan-out can indicate too many responsibilities or tight coupling.">Fan-out</div><div class="metric-value">${{node.metric_fan_out_dependency_graph}}</div></div>
           <div class="metric-card" title="Number of functions and methods."><div class="metric-label">Functions</div><div class="metric-value">${{node.function_count}}</div></div>
-          <div class="metric-card" title="Weighted structural complexity (branch count sum across all functions)."><div class="metric-label">Complexity</div><div class="metric-value">${{node.metric_file_result_dependency_graph_louvain_modularity_in_file}}</div></div>
-          <div class="metric-card" title="Hotspot score: weighted signal combining size, complexity, and dependency coupling. Higher = refactor priority."><div class="metric-label">Hotspot</div><div class="metric-value" style="color:${{hotspotColor(node.metric_file_hotspot_score)}}">${{node.metric_file_hotspot_score}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Complexity: estimated branching effort across this file. Higher values mean more paths to understand and test.">Complexity</div><div class="metric-value">${{node.metric_file_result_dependency_graph_louvain_modularity_in_file}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Hotspot: a structural priority signal combining size, complexity, and dependency coupling. Higher means a stronger refactoring candidate.">Hotspot</div><div class="metric-value" style="color:${{hotspotColor(node.metric_file_hotspot_score)}}">${{node.metric_file_hotspot_score}}</div></div>
         </div>
         ${{tags.length ? `<div class="node-tags">${{tags.join('')}}</div>` : ''}}
       `;
@@ -1789,7 +1804,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     graphTypeEl.innerHTML = payload.analysis_config.graph_types.map(t =>
       `<option value="${{t}}"${{t===payload.analysis_config.default_graph_type?' selected':''}}>${{graphTypeLabels[t]||t}}</option>`
     ).join('');
-    graphTypeEl.addEventListener('change', () => {{ activateGraph(graphTypeEl.value); }});
+      graphTypeEl.title = graphTypeDescriptions[graphTypeEl.value];
+      graphTypeEl.addEventListener('change', () => {{ graphTypeEl.title = graphTypeDescriptions[graphTypeEl.value]; activateGraph(graphTypeEl.value); }});
 
     // ── color mode ─────────────────────────────────────────────────
     document.getElementById('mode-community').addEventListener('click', () => {{
