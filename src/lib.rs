@@ -3,6 +3,7 @@ pub mod cli;
 pub mod config;
 pub mod defect_validation;
 pub mod discovery;
+pub mod duplication;
 pub mod error;
 pub mod fs;
 pub mod git;

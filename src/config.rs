@@ -324,7 +324,10 @@ fn default_duplication_enabled() -> bool {
 }
 
 fn default_min_token_window() -> usize {
-    40
+    // 40 was too short in practice: idiomatic GDScript field/export
+    // boilerplate routinely hits a 40-token match across unrelated files.
+    // 150 tokens (roughly a full small function) keeps matches meaningful.
+    150
 }
 
 fn default_project_root() -> String {

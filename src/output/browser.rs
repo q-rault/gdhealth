@@ -1920,6 +1920,11 @@ mod tests {
                     louvain_modularity: 0,
                 },
             ],
+            duplication: crate::model::DuplicationReport {
+                available: true,
+                unavailable_reason: None,
+                clones: Vec::new(),
+            },
         };
 
         let export = build_export(&graph, &metrics, &[], 0);

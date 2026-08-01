@@ -3,8 +3,10 @@ use crate::analysis::{
 };
 use crate::cli::CommandOptions;
 use crate::config::Config;
+use crate::duplication;
 use crate::error::{GdHealthError, Result};
 use crate::graph::build_graph;
+use crate::isolate::isolate;
 use crate::model::{FileMetric, FunctionMetric, MetricsReport, OutputMetadata};
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -141,12 +143,17 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
     let entity_scan = build_entity_scan(root, &graph, &file_metrics)?;
     let entity_metrics = build_entity_metrics(&entity_scan, &file_metrics);
 
+    let duplication_config = config.duplication.clone();
+    let duplication_report =
+        isolate("duplication", || duplication::detect(root, &graph, &duplication_config));
+
     Ok(MetricsReport {
         metadata: OutputMetadata::default(),
         root: options.root.to_string_lossy().into_owned(),
         files: file_metrics,
         functions: function_metrics,
         entities: entity_metrics,
+        duplication: duplication_report,
     })
 }
 

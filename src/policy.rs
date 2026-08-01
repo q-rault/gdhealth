@@ -447,6 +447,11 @@ mod tests {
                 hotspot_score: 99,
             }],
             entities: Vec::new(),
+            duplication: crate::model::DuplicationReport {
+                available: true,
+                unavailable_reason: None,
+                clones: Vec::new(),
+            },
         };
 
         let findings = collect_findings(&config, &graph, &metrics).expect("policy findings");

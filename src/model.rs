@@ -100,6 +100,35 @@ pub struct MetricsReport {
     pub files: Vec<FileMetric>,
     pub functions: Vec<FunctionMetric>,
     pub entities: Vec<EntityMetric>,
+    /// Experimental — token-kind clone detection, not yet a stable API
+    /// surface (same posture as `entity_scan` when it was introduced).
+    pub duplication: DuplicationReport,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ClonePair {
+    pub file_a: String,
+    pub start_line_a: usize,
+    pub file_b: String,
+    pub start_line_b: usize,
+    pub token_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DuplicationReport {
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+    pub clones: Vec<ClonePair>,
+}
+
+impl crate::isolate::Diagnosable for DuplicationReport {
+    fn unavailable(reason: String) -> Self {
+        Self {
+            available: false,
+            unavailable_reason: Some(reason),
+            clones: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

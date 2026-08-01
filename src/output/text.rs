@@ -109,7 +109,26 @@ pub fn render_metrics(report: &MetricsReport) -> String {
         }));
     }
 
+    extend_duplication(&mut lines, &report.duplication);
+
     lines.join("\n")
+}
+
+fn extend_duplication(lines: &mut Vec<String>, duplication: &crate::model::DuplicationReport) {
+    if !duplication.available {
+        return;
+    }
+    if duplication.clones.is_empty() {
+        return;
+    }
+
+    lines.push(format!("duplicate code blocks: {}", duplication.clones.len()));
+    lines.extend(duplication.clones.iter().take(20).map(|clone| {
+        format!(
+            "- {}:{} <-> {}:{} ({} tokens)",
+            clone.file_a, clone.start_line_a, clone.file_b, clone.start_line_b, clone.token_count
+        )
+    }));
 }
 
 pub fn render_policy(report: &PolicyReport) -> String {
@@ -181,6 +200,7 @@ pub fn render_health_bundle_summary(
     extend_cross_group_dependencies(&mut lines, &health.cross_group_dependencies);
     extend_cycles(&mut lines, &health.cycles);
     extend_policy_findings(&mut lines, &policy.findings);
+    extend_duplication(&mut lines, &metrics.duplication);
     extend_git_signals(
         &mut lines,
         health.git_available,
