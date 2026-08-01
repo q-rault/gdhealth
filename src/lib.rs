@@ -129,5 +129,22 @@ pub fn run() -> Result<()> {
                 options.fail_on.as_deref(),
             )
         }
+        Command::Risk(options) => {
+            let common = &options.common;
+            let risk = crate::git::risk::score_revspec(common.root.as_path(), &options.revspec)
+                .map_err(|message| crate::error::GdHealthError::Git { message })?;
+
+            let rendered = match common.format {
+                OutputFormat::Json => output::json::render(&risk)?,
+                OutputFormat::Dot | OutputFormat::EmergeJson | OutputFormat::EmergeHtml => {
+                    return Err(crate::error::GdHealthError::UnsupportedFormat(
+                        "risk does not support dot or browser output".to_string(),
+                    ));
+                }
+                OutputFormat::Text => output::text::render_risk(&risk),
+            };
+
+            fs::emit_output(common.output.as_deref(), &rendered)
+        }
     }
 }

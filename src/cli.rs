@@ -49,6 +49,25 @@ pub enum Command {
     /// Supports --format: json | text (only meaningful when --output is set)
     /// Use --fail-on critical|warning|info to exit 1 when findings reach the threshold.
     Health(CommandOptions),
+
+    /// Score a git commit or base..head range for defect risk from diff shape alone.
+    ///
+    /// Supports --format: json | text. Default output: stdout.
+    /// Uses repowise's published calibration coefficients as a placeholder —
+    /// NOT calibrated for GDScript. Treat the score as directional, not absolute.
+    Risk(RiskOptions),
+}
+
+#[derive(Debug, Args)]
+pub struct RiskOptions {
+    #[command(flatten)]
+    pub common: CommandOptions,
+
+    #[arg(
+        default_value = "HEAD",
+        help = "Commit or base..head range to score, e.g. HEAD or HEAD~5..HEAD"
+    )]
+    pub revspec: String,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

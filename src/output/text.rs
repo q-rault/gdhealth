@@ -1,3 +1,4 @@
+use crate::git::risk::ChangeRisk;
 use crate::model::{
     CoChangePair, FileMetric, FunctionMetric, GitFileStats, GraphReport, HealthReport,
     MetricsReport, PolicyFinding, PolicyReport,
@@ -279,6 +280,34 @@ fn extend_cycles(lines: &mut Vec<String>, cycles: &[Vec<String>]) {
             .iter()
             .map(|cycle| format!("- {}", cycle.join(" -> "))),
     );
+}
+
+pub fn render_risk(risk: &ChangeRisk) -> String {
+    let mut lines = vec![
+        format!("ref: {}", risk.ref_label),
+        format!("risk score: {:.1}/10 ({})", risk.score, risk.level),
+        format!("warning: {}", risk.calibration_warning),
+        "drivers:".to_string(),
+    ];
+
+    let mut sorted_drivers = risk.drivers.clone();
+    sorted_drivers.sort_by(|left, right| {
+        right
+            .contribution
+            .abs()
+            .partial_cmp(&left.contribution.abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    lines.extend(sorted_drivers.iter().map(|driver| match driver.value {
+        Some(value) => format!(
+            "- {}: {value:.1} ({}, push: {:+.3})",
+            driver.feature, driver.label, driver.contribution
+        ),
+        None => format!("- {}: {}", driver.feature, driver.label),
+    }));
+
+    lines.join("\n")
 }
 
 fn extend_git_signals(

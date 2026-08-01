@@ -2,6 +2,7 @@ mod blame;
 mod exec;
 mod hotspot;
 mod log_walk;
+pub mod risk;
 
 use crate::config::GitConfig;
 use crate::model::{GitFileStats, GitIntelligenceReport, GitOwnershipShare, ProjectFile};

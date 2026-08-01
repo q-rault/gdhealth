@@ -30,4 +30,6 @@ pub enum GdHealthError {
     UnsupportedFormat(String),
     #[error("policy threshold triggered: {message}")]
     FailOnTriggered { message: String },
+    #[error("git error: {message}")]
+    Git { message: String },
 }
