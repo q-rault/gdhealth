@@ -6,6 +6,7 @@ pub mod error;
 pub mod fs;
 pub mod graph;
 pub mod health;
+pub mod isolate;
 pub mod metrics;
 pub mod model;
 pub mod output;

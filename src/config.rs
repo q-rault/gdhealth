@@ -17,6 +17,12 @@ pub struct Config {
     pub thresholds: ThresholdConfig,
     #[serde(default)]
     pub policy: PolicyConfig,
+    #[serde(default)]
+    pub git: GitConfig,
+    #[serde(default)]
+    pub refactoring: RefactoringConfig,
+    #[serde(default)]
+    pub duplication: DuplicationConfig,
 }
 
 impl Config {
@@ -113,6 +119,9 @@ impl Default for Config {
             groups,
             thresholds: ThresholdConfig::default(),
             policy: PolicyConfig::default(),
+            git: GitConfig::default(),
+            refactoring: RefactoringConfig::default(),
+            duplication: DuplicationConfig::default(),
         }
     }
 }
@@ -199,6 +208,123 @@ pub struct ForbiddenDependencyRule {
     pub from: String,
     pub to: String,
     pub severity: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitConfig {
+    #[serde(default = "default_git_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_blame_max_file_lines")]
+    pub blame_max_file_lines: usize,
+    #[serde(default = "default_hotspot_halflife_days")]
+    pub hotspot_halflife_days: f64,
+    #[serde(default = "default_co_change_window_days")]
+    pub co_change_window_days: f64,
+    #[serde(default = "default_co_change_max_files_per_commit")]
+    pub co_change_max_files_per_commit: usize,
+    #[serde(default = "default_prior_defect_window_days")]
+    pub prior_defect_window_days: i64,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_git_enabled(),
+            blame_max_file_lines: default_blame_max_file_lines(),
+            hotspot_halflife_days: default_hotspot_halflife_days(),
+            co_change_window_days: default_co_change_window_days(),
+            co_change_max_files_per_commit: default_co_change_max_files_per_commit(),
+            prior_defect_window_days: default_prior_defect_window_days(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefactoringConfig {
+    #[serde(default = "default_max_cycle_files")]
+    pub max_cycle_files: usize,
+    #[serde(default = "default_max_cut_edges")]
+    pub max_cut_edges: usize,
+    #[serde(default = "default_split_file_min_symbols")]
+    pub split_file_min_symbols: usize,
+    #[serde(default = "default_split_file_modularity_gate")]
+    pub split_file_modularity_gate: f64,
+}
+
+impl Default for RefactoringConfig {
+    fn default() -> Self {
+        Self {
+            max_cycle_files: default_max_cycle_files(),
+            max_cut_edges: default_max_cut_edges(),
+            split_file_min_symbols: default_split_file_min_symbols(),
+            split_file_modularity_gate: default_split_file_modularity_gate(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicationConfig {
+    #[serde(default = "default_duplication_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_min_token_window")]
+    pub min_token_window: usize,
+}
+
+impl Default for DuplicationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_duplication_enabled(),
+            min_token_window: default_min_token_window(),
+        }
+    }
+}
+
+fn default_git_enabled() -> bool {
+    true
+}
+
+fn default_blame_max_file_lines() -> usize {
+    2000
+}
+
+fn default_hotspot_halflife_days() -> f64 {
+    60.0
+}
+
+fn default_co_change_window_days() -> f64 {
+    90.0
+}
+
+fn default_co_change_max_files_per_commit() -> usize {
+    20
+}
+
+fn default_prior_defect_window_days() -> i64 {
+    180
+}
+
+fn default_max_cycle_files() -> usize {
+    8
+}
+
+fn default_max_cut_edges() -> usize {
+    2
+}
+
+fn default_split_file_min_symbols() -> usize {
+    4
+}
+
+fn default_split_file_modularity_gate() -> f64 {
+    0.3
+}
+
+fn default_duplication_enabled() -> bool {
+    true
+}
+
+fn default_min_token_window() -> usize {
+    40
 }
 
 fn default_project_root() -> String {
