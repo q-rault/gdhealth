@@ -56,6 +56,14 @@ pub enum Command {
     /// Uses repowise's published calibration coefficients as a placeholder —
     /// NOT calibrated for GDScript. Treat the score as directional, not absolute.
     Risk(RiskOptions),
+
+    /// Self-check: do the lowest-scoring files by hotspot actually carry
+    /// more prior-defect history than the repo average?
+    ///
+    /// Supports --format: json | text. Default output: stdout.
+    /// Prints "insufficient data" rather than a number on small/young repos.
+    /// Diagnostic only — never part of `health` or CI gating.
+    ValidateDefects(CommandOptions),
 }
 
 #[derive(Debug, Args)]

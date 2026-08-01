@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod cli;
 pub mod config;
+pub mod defect_validation;
 pub mod discovery;
 pub mod error;
 pub mod fs;
@@ -145,6 +146,38 @@ pub fn run() -> Result<()> {
             };
 
             fs::emit_output(common.output.as_deref(), &rendered)
+        }
+        Command::ValidateDefects(options) => {
+            let report_graph = graph::build_graph(&config, &options)?;
+            let report_metrics = metrics::compute_metrics(&config, &options)?;
+
+            let git_report = if config.git.enabled && !options.no_git {
+                crate::isolate::isolate("git-intelligence", || {
+                    git::collect(options.root.as_path(), &report_graph.files, &config.git)
+                })
+            } else {
+                <crate::model::GitIntelligenceReport as crate::isolate::Diagnosable>::unavailable(
+                    "git intelligence disabled (--no-git or [git] enabled = false)".to_string(),
+                )
+            };
+
+            let report = defect_validation::validate(
+                &report_metrics.files,
+                &git_report,
+                defect_validation::DEFAULT_K,
+            );
+
+            let rendered = match options.format {
+                OutputFormat::Json => output::json::render(&report)?,
+                OutputFormat::Dot | OutputFormat::EmergeJson | OutputFormat::EmergeHtml => {
+                    return Err(crate::error::GdHealthError::UnsupportedFormat(
+                        "validate-defects does not support dot or browser output".to_string(),
+                    ));
+                }
+                OutputFormat::Text => output::text::render_defect_validation(&report),
+            };
+
+            fs::emit_output(options.output.as_deref(), &rendered)
         }
     }
 }

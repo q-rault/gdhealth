@@ -1,3 +1,4 @@
+use crate::defect_validation::DefectValidationReport;
 use crate::git::risk::ChangeRisk;
 use crate::model::{
     CoChangePair, FileMetric, FunctionMetric, GitFileStats, GraphReport, HealthReport,
@@ -308,6 +309,27 @@ pub fn render_risk(risk: &ChangeRisk) -> String {
     }));
 
     lines.join("\n")
+}
+
+pub fn render_defect_validation(report: &DefectValidationReport) -> String {
+    if !report.available {
+        return format!(
+            "defect validation: unavailable ({})",
+            report.reason.as_deref().unwrap_or("unknown reason")
+        );
+    }
+
+    format!(
+        "defect validation: {}/{} of the {} worst-hotspot files had a bug fix in the tracked window, {:.0}% vs a {:.0}% repo baseline ({:.1}x lift)\nscored files: {}, files with prior-defect history: {}",
+        report.hits,
+        report.bottom_k,
+        report.bottom_k,
+        report.precision * 100.0,
+        report.base_rate * 100.0,
+        report.lift,
+        report.scored_file_count,
+        report.defect_file_count
+    )
 }
 
 fn extend_git_signals(
