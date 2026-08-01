@@ -1,8 +1,8 @@
 use crate::error::Result;
 use crate::fs;
 use crate::model::{
-    DependencyKind, EntityEdge, EntityMetric, GraphReport, MetricsReport, PolicyFinding,
-    TOOL_NAME, TOOL_VERSION,
+    DependencyKind, EntityEdge, EntityMetric, GitIntelligenceReport, GraphReport, MetricsReport,
+    PolicyFinding, RefactorSuggestion, TOOL_NAME, TOOL_VERSION,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -22,6 +22,16 @@ struct BrowserExport {
     policy_summary: PolicySummaryExport,
     top_policy_findings: Vec<BrowserPolicyFinding>,
     top_functions: Vec<BrowserFunctionMetric>,
+    insights: Option<BrowserInsights>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BrowserInsights {
+    git_available: bool,
+    repo_bus_factor: usize,
+    top_churn_files: Vec<crate::model::GitFileStats>,
+    duplicates: Vec<crate::model::ClonePair>,
+    refactor_suggestions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,7 +197,48 @@ pub fn emit_emerge_html(
     policy_findings: &[PolicyFinding],
     cross_group_dep_count: usize,
 ) -> Result<()> {
-    let export = build_export(graph, metrics, policy_findings, cross_group_dep_count);
+    emit_emerge_html_with_insights(
+        root,
+        output,
+        graph,
+        metrics,
+        policy_findings,
+        cross_group_dep_count,
+        None,
+    )
+}
+
+pub fn emit_health_emerge_html(
+    root: &Path,
+    output: Option<&Path>,
+    graph: &GraphReport,
+    metrics: &MetricsReport,
+    policy_findings: &[PolicyFinding],
+    cross_group_dep_count: usize,
+    git: &GitIntelligenceReport,
+) -> Result<()> {
+    emit_emerge_html_with_insights(
+        root,
+        output,
+        graph,
+        metrics,
+        policy_findings,
+        cross_group_dep_count,
+        Some(git),
+    )
+}
+
+fn emit_emerge_html_with_insights(
+    root: &Path,
+    output: Option<&Path>,
+    graph: &GraphReport,
+    metrics: &MetricsReport,
+    policy_findings: &[PolicyFinding],
+    cross_group_dep_count: usize,
+    git: Option<&GitIntelligenceReport>,
+) -> Result<()> {
+    let export =
+        build_export_with_insights(graph, metrics, policy_findings, cross_group_dep_count, git);
     let json = serde_json::to_string_pretty(&export)?;
     let (html_path, json_path) = resolve_html_output_paths(root, output);
     let html = render_html(&json, &export.metadata.project_name);
@@ -202,6 +253,16 @@ fn build_export(
     metrics: &MetricsReport,
     policy_findings: &[PolicyFinding],
     cross_group_dep_count: usize,
+) -> BrowserExport {
+    build_export_with_insights(graph, metrics, policy_findings, cross_group_dep_count, None)
+}
+
+fn build_export_with_insights(
+    graph: &GraphReport,
+    metrics: &MetricsReport,
+    policy_findings: &[PolicyFinding],
+    cross_group_dep_count: usize,
+    git: Option<&GitIntelligenceReport>,
 ) -> BrowserExport {
     let project_name = derive_project_name(&graph.root);
     let parser_warning_count_by_file = build_parser_warning_counts(&graph.parser_warnings);
@@ -276,8 +337,14 @@ fn build_export(
             node_id_set.contains(edge.from.as_str()) && node_id_set.contains(edge.to.as_str())
         })
         .map(|edge| {
-            let from_group = group_by_file.get(edge.from.as_str()).copied().unwrap_or("ungrouped");
-            let to_group = group_by_file.get(edge.to.as_str()).copied().unwrap_or("ungrouped");
+            let from_group = group_by_file
+                .get(edge.from.as_str())
+                .copied()
+                .unwrap_or("ungrouped");
+            let to_group = group_by_file
+                .get(edge.to.as_str())
+                .copied()
+                .unwrap_or("ungrouped");
             BrowserLink {
                 source: edge.from.clone(),
                 target: edge.to.clone(),
@@ -364,6 +431,27 @@ fn build_export(
             start_line: f.start_line,
         })
         .collect();
+    let insights = git.map(|git| BrowserInsights {
+        git_available: git.available,
+        repo_bus_factor: git.repo_bus_factor,
+        top_churn_files: git
+            .files
+            .iter()
+            .filter(|f| f.is_churn_hotspot)
+            .take(8)
+            .cloned()
+            .collect(),
+        duplicates: metrics.duplication.clones.iter().take(8).cloned().collect(),
+        refactor_suggestions: policy_findings
+            .iter()
+            .filter_map(|f| {
+                f.suggested_fix
+                    .as_ref()
+                    .map(|fix| format_refactor_suggestion(f.file.as_deref(), fix))
+            })
+            .take(8)
+            .collect(),
+    });
 
     BrowserExport {
         metadata: BrowserMetadata {
@@ -423,8 +511,7 @@ fn build_export(
                             total_sloc.to_string(),
                         ),
                         (
-                            "metric_file_result_dependency_graph_total_parser_warnings"
-                                .to_string(),
+                            "metric_file_result_dependency_graph_total_parser_warnings".to_string(),
                             graph.parser_warnings.len().to_string(),
                         ),
                     ]),
@@ -438,6 +525,24 @@ fn build_export(
         policy_summary,
         top_policy_findings,
         top_functions,
+        insights,
+    }
+}
+
+fn format_refactor_suggestion(file: Option<&str>, suggestion: &RefactorSuggestion) -> String {
+    let target = file.unwrap_or("project");
+    match suggestion {
+        RefactorSuggestion::BreakCycle { cut_edges } => {
+            let edges = cut_edges
+                .iter()
+                .map(|(from, to)| format!("{from} → {to}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Break cycle in {target}: remove {edges}")
+        }
+        RefactorSuggestion::SplitFile { proposed_groups, .. } => {
+            format!("Split {target} into {} cohesive groups", proposed_groups.len())
+        }
     }
 }
 
@@ -490,8 +595,7 @@ fn build_entity_graph_export(
     let links = edges
         .iter()
         .filter(|edge| {
-            entity_id_set.contains(edge.from.as_str())
-                && entity_id_set.contains(edge.to.as_str())
+            entity_id_set.contains(edge.from.as_str()) && entity_id_set.contains(edge.to.as_str())
         })
         .map(|edge| BrowserLink {
             source: edge.from.clone(),
@@ -1187,6 +1291,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       .app {{ grid-template-columns: 1fr; height: auto; overflow: auto; }}
       html, body {{ height: auto; overflow: auto; }}
       .canvas-panel {{ height: 60vh; }}
+      .panel-body {{ max-height: none; overflow: visible; }}
     }}
   </style>
 </head>
@@ -1249,6 +1354,19 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <div class="section-label">Hot functions</div>
           <div id="hot-functions" class="fn-list"></div>
         </div>
+        <div class="divider"></div>
+        <div class="section">
+          <div class="section-label">Git signals</div>
+          <div id="git-insights" class="fn-list"></div>
+        </div>
+        <div class="section">
+          <div class="section-label">Duplicate code</div>
+          <div id="duplicate-insights" class="fn-list"></div>
+        </div>
+        <div class="section">
+          <div class="section-label">Refactoring suggestions</div>
+          <div id="refactor-insights" class="fn-list"></div>
+        </div>
       </div>
     </aside>
   </div>
@@ -1280,6 +1398,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     const searchEl = document.getElementById('search');
     const policyEl = document.getElementById('policy-findings');
     const hotFnEl = document.getElementById('hot-functions');
+    const gitInsightsEl = document.getElementById('git-insights');
+    const duplicateInsightsEl = document.getElementById('duplicate-insights');
+    const refactorInsightsEl = document.getElementById('refactor-insights');
     const policyAside = document.getElementById('policy-count-aside');
     const hotspotLegend = document.getElementById('hotspot-legend');
     const svg = document.getElementById('graph');
@@ -1444,6 +1565,27 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           </div>
         `;
       }}).join('');
+    }}
+
+    function renderInsights() {{
+      const i = payload.insights;
+      if (!i) {{
+        gitInsightsEl.innerHTML = '<div class="empty-state">Available in the full health report.</div>';
+        duplicateInsightsEl.innerHTML = '<div class="empty-state">Available in the full health report.</div>';
+        refactorInsightsEl.innerHTML = '<div class="empty-state">Available in the full health report.</div>';
+        return;
+      }}
+      gitInsightsEl.innerHTML = i.git_available
+        ? [`<div class="fn-item"><span class="fn-name">Bus factor</span><span class="fn-score fn-score-mid">${{i.repo_bus_factor}}</span></div>`,
+           ...i.top_churn_files.map(f => `<div class="fn-item"><span class="fn-name" title="${{f.file}}">${{f.file}}</span><span class="fn-score fn-score-high">${{f.temporal_hotspot_score.toFixed(1)}}</span></div>`)]
+            .join('')
+        : '<div class="empty-state">Git signals unavailable.</div>';
+      duplicateInsightsEl.innerHTML = i.duplicates.length
+        ? i.duplicates.map(d => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">${{d.file_a}}:${{d.start_line_a}} ↔ ${{d.file_b}}:${{d.start_line_b}}</div><div class="node-path">${{d.token_count}} normalized tokens</div></div></div>`).join('')
+        : '<div class="empty-state">No duplicates detected.</div>';
+      refactorInsightsEl.innerHTML = i.refactor_suggestions.length
+        ? i.refactor_suggestions.map(s => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">${{s}}</div></div></div>`).join('')
+        : '<div class="empty-state">No concrete suggestion.</div>';
     }}
 
     // ── graph helpers ──────────────────────────────────────────────
@@ -1692,6 +1834,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     // ── boot ───────────────────────────────────────────────────────
     renderPolicyFindings();
     renderHotFunctions();
+    renderInsights();
     activateGraph(graphType);
   </script>
 </body>

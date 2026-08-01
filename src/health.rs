@@ -7,8 +7,8 @@ use crate::graph::build_graph;
 use crate::isolate::{isolate, isolate_or};
 use crate::metrics::compute_metrics;
 use crate::model::{
-    GitIntelligenceReport, GraphReport, HealthReport, HealthSummary, MetricsReport,
-    OutputMetadata, PolicyReport,
+    GitIntelligenceReport, GraphReport, HealthReport, HealthSummary, MetricsReport, OutputMetadata,
+    PolicyReport,
 };
 use crate::output::{browser, dot, json, text};
 use crate::policy::collect_findings;
@@ -157,13 +157,14 @@ pub fn emit_report_bundle(bundle_dir: &Path, artifacts: &HealthArtifacts) -> Res
     let root = PathBuf::from(&artifacts.graph.root);
     let browser_dir = bundle_dir.join("browser");
     let cross_group_dep_count = artifacts.health.cross_group_dependencies.len();
-    browser::emit_emerge_html(
+    browser::emit_health_emerge_html(
         &root,
         Some(&browser_dir),
         &artifacts.graph,
         &artifacts.metrics,
         &artifacts.policy.findings,
         cross_group_dep_count,
+        &artifacts.git,
     )?;
 
     Ok(())
