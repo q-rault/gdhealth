@@ -105,3 +105,49 @@ severity = "critical"
 | `severity` | string | `info`, `warning`, `critical` |
 
 Multiple rules are allowed. Each is independent — all matching rules fire for a given edge.
+
+---
+
+## `[git]`
+
+Controls the git-derived signals (churn hotspots, ownership, co-change, change entropy,
+prior-defect history) computed by `gdhealth health`, `gdhealth risk`, and `gdhealth validate-defects`.
+Shells out to the system `git` binary — no `git2`/libgit2 dependency. Experimental (see
+[Schema Reference](/docs/schema-reference)).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `true` | Set `false` to skip git entirely (same effect as `--no-git`) |
+| `blame_max_file_lines` | int | 2000 | Skip `git blame` on files larger than this, to bound cost |
+| `hotspot_halflife_days` | float | 60 | Decay half-life for the temporal hotspot score |
+| `co_change_window_days` | float | 90 | Decay time constant for co-change weight and change entropy |
+| `co_change_max_files_per_commit` | int | 20 | Commits touching more files than this are excluded as mass-edit noise |
+| `prior_defect_window_days` | int | 180 | Trailing window for counting fix-shaped commits per file |
+
+If the project root isn't a git repository (or `git` isn't installed), gdhealth degrades gracefully —
+`git_available: false` in `health.json`, no other command fails.
+
+---
+
+## `[refactoring]`
+
+Bounds for the Break Cycle and Split File refactoring suggestions attached to policy findings.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `max_cycle_files` | int | 8 | Skip Break Cycle on cycles larger than this |
+| `max_cut_edges` | int | 2 | Try removing up to this many edges to break a cycle (capped at 2 regardless of a higher value) |
+| `split_file_min_symbols` | int | 4 | Minimum top-level symbols before Split File is attempted |
+| `split_file_modularity_gate` | float | 0.3 | Minimum modularity for a Split File suggestion to fire |
+
+---
+
+## `[duplication]`
+
+Token-kind clone detection (Rabin-Karp rolling hash). Identifiers collapse to a single token kind,
+so a copy-pasted block with renamed variables still matches.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `true` | Set `false` to skip duplication detection |
+| `min_token_window` | int | 150 | Minimum matching token window. Lower values catch smaller clones but produce more noise — 40 was tried and found too short in practice (idiomatic GDScript field/export boilerplate matched across unrelated files). |

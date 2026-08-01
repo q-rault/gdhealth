@@ -70,8 +70,25 @@ Produced by `gdhealth metrics --format json` and `gdhealth health` (bundle).
   files: FileMetric[]
   functions: FunctionMetric[]
   entities: EntityMetric[]
+  duplication: DuplicationReport   // experimental, see below
 }
 ```
+
+**`DuplicationReport`** (experimental — see [Stability guarantees](#stability-guarantees))
+
+| Field | Type | Description |
+|---|---|---|
+| `available` | boolean | `false` if duplication detection was disabled or failed |
+| `unavailable_reason` | string \| null | Why, when `available` is `false` |
+| `clones` | ClonePair[] | Token-kind clone matches (renamed identifiers still match) |
+
+**`ClonePair`**
+
+| Field | Type | Description |
+|---|---|---|
+| `file_a` / `file_b` | string | The two files involved |
+| `start_line_a` / `start_line_b` | number | Start line of the matching block in each file |
+| `token_count` | number | Size of the matching token window (`[duplication].min_token_window`) |
 
 **`FileMetric`**
 
@@ -132,8 +149,18 @@ Produced by `gdhealth policy --format json` and `gdhealth health` (bundle).
 | `file` | string \| null | Primary file involved, if applicable |
 | `line` | number \| null | Line number in the file, if applicable |
 | `related_files` | string[] | All files involved (e.g. both ends of a forbidden dependency) |
+| `suggested_fix` | RefactorSuggestion \| absent | Present only on `cycle_detected` and `split-file-candidate` findings gated to a concrete fix. Experimental. |
 
 Findings are sorted: critical first, then by file path, then by line.
+
+**`RefactorSuggestion`** (experimental — see [Stability guarantees](#stability-guarantees))
+
+Tagged union on a `kind` field:
+
+```
+{ kind: "BreakCycle", cut_edges: [string, string][] }
+{ kind: "SplitFile", proposed_groups: string[][], modularity: number }
+```
 
 ---
 
@@ -152,6 +179,12 @@ Produced by `gdhealth health`. The primary integration surface for gdsuite and a
   cycles: string[][]
   policy_findings: PolicyFinding[]
   cross_group_dependencies: string[]  // human-readable edge descriptions
+  git_available: boolean
+  git_unavailable_reason: string | null
+  git_shallow_repository: boolean
+  repo_bus_factor: number
+  top_churn_files: GitFileStats[]     // top 10 by temporal hotspot score, experimental
+  top_co_changes: CoChangePair[]      // top 10 by weight, experimental
 }
 ```
 
@@ -163,12 +196,72 @@ Produced by `gdhealth health`. The primary integration surface for gdsuite and a
 | `edge_count` | number | Total dependency edges |
 | `policy_finding_count` | number | Total findings (all severities) |
 
+**`GitFileStats`** (experimental — see [Stability guarantees](#stability-guarantees))
+
+| Field | Type | Description |
+|---|---|---|
+| `file` | string | Project-relative file path |
+| `commit_count_total` / `commit_count_90d` / `commit_count_30d` | number | Commit counts touching this file |
+| `lines_added_90d` / `lines_deleted_90d` | number | Churn in the last 90 days |
+| `temporal_hotspot_score` | number | Recency-decayed churn score |
+| `change_entropy` | number | Hassan's HCM — how scattered the file's co-commits are |
+| `prior_defect_count` | number | Fix-shaped commits touching this file within the configured window |
+| `ownership` | `{author_email, share}[]` | Blame-derived line-share per author, sorted descending |
+| `churn_percentile` | number | 0-1, this file's rank among all scored files |
+| `is_churn_hotspot` | boolean | Top quartile by churn **and** meets an absolute activity floor |
+
+**`CoChangePair`**: `{ file_a, file_b, weight }` — two files that tend to change together, weight decayed by commit age.
+
+---
+
+## `gdhealth risk` output
+
+Not part of the `health` bundle — a standalone command, see [CLI Reference](/docs/cli-reference#gdhealth-risk).
+
+```
+{
+  score: number        // 0-10
+  probability: number  // calibrated logistic probability
+  level: string        // "low" | "moderate" | "high"
+  drivers: RiskDriver[]
+  ref_label: string
+  calibration_warning: string  // always present — not calibrated for GDScript
+}
+```
+
+`RiskDriver`: `{ feature, value: number | null, contribution, label }` — `value` is `null` when the
+feature (currently only author experience) is unknown for this change.
+
+---
+
+## `gdhealth validate-defects` output
+
+Also standalone, not part of the `health` bundle.
+
+```
+{
+  available: boolean
+  reason: string | null       // set when available is false
+  scored_file_count: number
+  defect_file_count: number
+  bottom_k: number
+  hits: number
+  precision: number
+  base_rate: number
+  lift: number
+}
+```
+
 ---
 
 ## Stability guarantees
 
 All fields listed above are **stable** as of schema version 1. They will not be removed or renamed without a schema version bump.
 
-Fields inside `entity_scan` and `file_graph_metrics` in `graph.json` are available but not yet committed to as a stable API surface — treat them as internal/experimental.
+Fields inside `entity_scan` and `file_graph_metrics` in `graph.json`, `duplication` in `metrics.json`,
+`suggested_fix`/`RefactorSuggestion` on policy findings, and `top_churn_files`/`top_co_changes`/`GitFileStats`/`CoChangePair`
+in `health.json` are available but not yet committed to as a stable API surface — treat them as
+internal/experimental. `gdhealth risk` and `gdhealth validate-defects` are standalone diagnostic
+commands (not part of `health.json`) and are likewise still settling.
 
 To detect schema changes in your automation, check `schema_version` at the top of each JSON file.

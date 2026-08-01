@@ -42,6 +42,8 @@ The following features are available directly via `gdhealth` but are not part of
 - `gdhealth graph --format emerge-json` — raw browser payload
 - `gdhealth metrics` — standalone metrics command
 - `gdhealth policy` — standalone policy command
+- `gdhealth risk <revspec>` — standalone commit/range defect-risk scoring (uncalibrated for GDScript)
+- `gdhealth validate-defects` — standalone diagnostic self-check
 
 These are advanced workflows for users who want to go deeper than the `health` summary provides.
 
@@ -51,6 +53,14 @@ These are advanced workflows for users who want to go deeper than the `health` s
 - The bundle output path (`reports/code-health/`) is stable.
 - The `summary`, `top_files`, `top_functions`, `cycles`, `policy_findings`, and `cross_group_dependencies` fields in `health.json` are all stable.
 - Exit codes 0 and 1 are stable and have the semantics described in [CLI Reference](/docs/cli-reference).
+- New in `health.json`: `git_available`, `repo_bus_factor`, `top_churn_files`, `top_co_changes` (git
+  intelligence), and `suggested_fix` on `policy_findings` entries (refactoring suggestions). These
+  are **additive and available but not yet part of the stable integration contract** — gdsuite does
+  not need to change to keep working, but should not build hard dependencies on their exact shape
+  yet. Same posture `entity_scan` had when it was introduced.
+- `metrics.json`'s new `duplication` field is likewise additive/experimental and outside the
+  gdsuite contract (gdsuite doesn't read `metrics.json` at all, per the "what gdsuite consumes"
+  section above).
 
 ## Upgrading
 

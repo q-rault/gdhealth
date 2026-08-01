@@ -8,6 +8,9 @@
 - Identify the highest-complexity files and functions as refactor targets
 - Enforce size, complexity, and dependency rules in CI with exit-code semantics
 - Produce stable, machine-readable JSON artifacts for trend tracking and tooling
+- See which files actually churn and carry bug history, via git (ownership, co-change, hotspots)
+- Score a commit or PR range for defect risk from diff shape alone
+- Flag likely copy-pasted code and get concrete "cut this edge" / "split this file" suggestions
 
 ## Install
 
@@ -76,14 +79,18 @@ cat reports/code-health/summary.txt
 
 ## Commands
 
-| Command            | What it does                                              |
-|--------------------|-----------------------------------------------------------|
-| `gdhealth graph`   | Extract and render the file dependency graph              |
-| `gdhealth metrics` | Compute file and function-level complexity metrics        |
-| `gdhealth policy`  | Evaluate architecture and threshold policies              |
-| `gdhealth health`  | Bundle graph + metrics + policy + summary (recommended)   |
+| Command                     | What it does                                                       |
+|------------------------------|---------------------------------------------------------------------|
+| `gdhealth graph`             | Extract and render the file dependency graph                        |
+| `gdhealth metrics`           | Compute file/function complexity metrics, plus duplicate-code hints |
+| `gdhealth policy`            | Evaluate architecture and threshold policies                        |
+| `gdhealth health`            | Bundle graph + metrics + policy + git signals + summary (recommended) |
+| `gdhealth risk <revspec>`    | Score a commit or `base..head` range for defect risk (diff shape only) |
+| `gdhealth validate-defects`  | Self-check: do the worst-hotspot files actually carry bug history?  |
 
-Each command accepts `--root <path>`, `--format <format>`, `--output <file>`, and `--fail-on <severity>`.
+Each command accepts `--root <path>`, `--format <format>`, `--output <file>`, and `--fail-on <severity>`
+(`--fail-on` has no effect on `risk`/`validate-defects`, which are diagnostic-only). `health`, `risk`,
+and `validate-defects` additionally accept `--no-git` to skip git-derived signals.
 
 For tooling integration, `gdhealth` also exposes stable probe commands:
 
@@ -104,6 +111,34 @@ gdhealth schema-version
 | `emerge-html`  | ✓       |           |          |          |
 
 The `emerge-html` format writes a self-contained browser viewer to `reports/code-health/browser/`.
+
+## Git-derived signals
+
+`gdhealth health` shells out to the system `git` binary (no `git2`/libgit2 dependency) to compute,
+per file: commit frequency and recency, a temporal churn-hotspot score, ownership via `git blame`,
+co-change partners, change entropy, and prior-defect count (mined from fix-commit-shaped messages).
+This is always on when the project is a git repository; pass `--no-git` or set `[git] enabled = false`
+in `gdhealth.toml` to skip it.
+
+`gdhealth risk <revspec>` scores a single commit or a `base..head` range from diff shape alone (size,
+diffusion across files/directories, author experience) using calibration coefficients published by
+[repowise](https://github.com/repowise-dev/repowise) as a placeholder. **These are not calibrated for
+GDScript/Godot** — treat the score as directional, not absolute, until a Godot-specific defect corpus
+exists to recalibrate against.
+
+`gdhealth validate-defects` checks whether the existing structural hotspot score actually correlates
+with files that had real bugs (via the git prior-defect signal above), and prints "insufficient data"
+rather than a misleading number on small or young repositories.
+
+## Current limits (new features)
+
+The git intelligence layer, `risk`, `validate-defects`, duplicate-code detection, and the
+`suggested_fix` field on cycle/split-file findings are new and still settling — treat their exact
+fields as informational rather than a stable API surface (see [schema reference](docs/content/docs/schema-reference.mdx)).
+In particular: `gdhealth risk`'s coefficients are an explicit placeholder (see above), and Split File's
+community-detection heuristic is intentionally conservative — it currently emits no suggestion on
+codebases where the reused Louvain-style optimizer fragments a file into many small communities
+rather than 2-6 cohesive ones, since no suggestion is better than an unhelpful 13-way split.
 
 ## CI usage
 

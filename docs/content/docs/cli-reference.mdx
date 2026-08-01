@@ -102,6 +102,53 @@ When `--output <file>` is set, writes a single file in `--format json|text` inst
 | `--format <fmt>` | `text` | `json` or `text` — only used when `--output` is set |
 | `--output <file>` | bundle | Write single file instead of the bundle |
 | `--fail-on <sev>` | off | Exit 1 if any finding is at or above this severity |
+| `--no-git` | off | Skip git-derived signals even if `[git] enabled = true` |
+
+`health.json` additionally carries `git_available`, `repo_bus_factor`, `top_churn_files`, and
+`top_co_changes`. `metrics.json` carries `duplication` (clone pairs) and cycle/split-file policy
+findings may carry a `suggested_fix`. See [Schema Reference](/docs/schema-reference).
+
+---
+
+### `gdhealth risk`
+
+Score a git commit or `base..head` range for defect risk from diff shape alone (size, diffusion,
+author experience). **Not calibrated for GDScript** — the coefficients are ported from repowise's
+generic corpus as a placeholder; treat the score as directional, not absolute.
+
+```sh
+gdhealth risk [revspec] --root <path> [--format json|text]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `revspec` | `HEAD` | A commit (`HEAD`, `abc123`) or a range (`HEAD~5..HEAD`) |
+| `--root <path>` | `.` | Project root (must be a git repository) |
+| `--format <fmt>` | `text` | `json` or `text` only |
+| `--no-git` | off | N/A — `risk` always needs git; exits 1 if unavailable |
+
+Always exits 0 on a successfully scored change; exits 1 if git is unavailable or the revspec is
+invalid. Does not support `--fail-on` — it's diagnostic, not a CI gate.
+
+---
+
+### `gdhealth validate-defects`
+
+Self-check: do the files with the worst structural hotspot score actually carry more prior-defect
+history (from git) than the repo average? Prints "insufficient data" rather than a misleading number
+below 25 scored files or 5 files with defect history.
+
+```sh
+gdhealth validate-defects --root <path> [--format json|text]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--root <path>` | `.` | Project root to analyze |
+| `--format <fmt>` | `text` | `json` or `text` only |
+| `--no-git` | off | Skip git-derived signals (report will read as unavailable) |
+
+Always exits 0. Diagnostic only — never part of `health` or CI gating.
 
 ---
 

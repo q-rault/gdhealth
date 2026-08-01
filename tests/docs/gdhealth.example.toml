@@ -64,4 +64,30 @@ severity = "critical"
 from     = "net"
 to       = "server"
 severity = "warning"
+
+# ── Git ──────────────────────────────────────────────────────────────────────
+# Git-derived signals (churn hotspots, ownership, co-change, prior-defect
+# history) for `gdhealth health`. Shells to the system `git` binary — no
+# git2/libgit2 dependency. Disable with --no-git or enabled = false.
+[git]
+enabled = true
+blame_max_file_lines = 2000
+hotspot_halflife_days = 60
+co_change_window_days = 90
+co_change_max_files_per_commit = 20
+prior_defect_window_days = 180
+
+# ── Refactoring ──────────────────────────────────────────────────────────────
+# Bounds for the Break Cycle and Split File refactoring suggestions.
+[refactoring]
+max_cycle_files = 8
+max_cut_edges = 2
+split_file_min_symbols = 4
+split_file_modularity_gate = 0.3
+
+# ── Duplication ──────────────────────────────────────────────────────────────
+# Token-kind clone detection (renamed identifiers still match).
+[duplication]
+enabled = true
+min_token_window = 150
 # endregion
