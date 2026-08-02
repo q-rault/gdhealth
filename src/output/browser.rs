@@ -1390,7 +1390,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       file_result_dependency_graph: 'File dependencies',
       entity_result_dependency_graph: 'Entity dependencies',
       entity_result_inheritance_graph: 'Entity inheritance',
-      entity_result_complete_graph: 'Entity complete'
+      entity_result_complete_graph: 'Entity dependencies + inheritance'
     }};
     const graphTypeDescriptions = {{
       file_result_dependency_graph: 'File dependencies: imports, preloads, loads, and inheritance links between script files.',
@@ -1408,6 +1408,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     let maxHotspot = 1;
     let searchTerm = '';
     let zoom = 1;
+    let zoomCenter = {{ x: W / 2, y: H / 2 }};
 
     const selEl = document.getElementById('selection');
     const clustersEl = document.getElementById('clusters');
@@ -1430,7 +1431,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
     function applyZoom() {{
       const width = W / zoom, height = H / zoom;
-      svg.setAttribute('viewBox', `${{(W-width)/2}} ${{(H-height)/2}} ${{width}} ${{height}}`);
+      const x = Math.max(0, Math.min(W - width, zoomCenter.x - width / 2));
+      const y = Math.max(0, Math.min(H - height, zoomCenter.y - height / 2));
+      svg.setAttribute('viewBox', `${{x}} ${{y}} ${{width}} ${{height}}`);
       document.getElementById('zoom-reset').textContent = `${{Math.round(zoom * 100)}}%`;
     }}
 
@@ -1473,6 +1476,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         ['Edges', stats.edge_count, 'Dependency connections between files.'],
         ['Clusters', stats.community_count, 'Communities detected by Louvain clustering: files that are more connected to each other than to the rest of the project.'],
         ['SLOC', stats.total_sloc.toLocaleString(), 'Source lines of code: physical lines in analyzed scripts, excluding non-code project assets.'],
+        ['Signals', nodes.reduce((total, node) => total + node.signal_count, 0), 'GDScript signal declarations found in the current graph view. Signals are event hooks that scripts can emit and connect to.'],
       ].map(([l,v,tip]) => `<div class="stat-card"><div class="stat-label has-tooltip" data-tooltip="${{tip}}">${{l}}</div><div class="stat-value">${{v}}</div></div>`).join('');
 
       badgesEl.innerHTML = [
@@ -1540,6 +1544,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <div class="metric-card" title="Total lines in this file."><div class="metric-label">Lines</div><div class="metric-value">${{node.line_count}}</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Fan-in: how many analyzed files depend on this one. High fan-in means a widely reused, potentially sensitive component.">Fan-in</div><div class="metric-value">${{node.metric_fan_in_dependency_graph}}</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Fan-out: how many analyzed files this one depends on. High fan-out can indicate too many responsibilities or tight coupling.">Fan-out</div><div class="metric-value">${{node.metric_fan_out_dependency_graph}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Signals: GDScript event declarations on this file. They expose events that other scripts can connect to.">Signals</div><div class="metric-value">${{node.signal_count}}</div></div>
           <div class="metric-card" title="Number of functions and methods."><div class="metric-label">Functions</div><div class="metric-value">${{node.function_count}}</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Complexity: estimated branching effort across this file. Higher values mean more paths to understand and test.">Complexity</div><div class="metric-value">${{node.metric_file_result_dependency_graph_louvain_modularity_in_file}}</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Hotspot: a structural priority signal combining size, complexity, and dependency coupling. Higher means a stronger refactoring candidate.">Hotspot</div><div class="metric-value" style="color:${{hotspotColor(node.metric_file_hotspot_score)}}">${{node.metric_file_hotspot_score}}</div></div>
@@ -1803,9 +1808,19 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       }}
     }});
     window.addEventListener('mouseup', () => {{ draggingNode=null; }});
-    document.getElementById('zoom-in').addEventListener('click', () => {{ zoom = Math.min(3, zoom * 1.25); applyZoom(); }});
-    document.getElementById('zoom-out').addEventListener('click', () => {{ zoom = Math.max(0.5, zoom / 1.25); applyZoom(); }});
-    document.getElementById('zoom-reset').addEventListener('click', () => {{ zoom = 1; applyZoom(); }});
+    document.getElementById('zoom-in').addEventListener('click', () => {{
+      zoom = Math.min(3, zoom * 1.25);
+      const selected = activeNodeId ? nodeMap.get(activeNodeId) : null;
+      if (selected) zoomCenter = {{ x: selected.x, y: selected.y }};
+      applyZoom();
+    }});
+    document.getElementById('zoom-out').addEventListener('click', () => {{
+      zoom = Math.max(1, zoom / 1.25);
+      zoomCenter = {{ x: (zoomCenter.x + W / 2) / 2, y: (zoomCenter.y + H / 2) / 2 }};
+      if (zoom === 1) zoomCenter = {{ x: W / 2, y: H / 2 }};
+      applyZoom();
+    }});
+    document.getElementById('zoom-reset').addEventListener('click', () => {{ zoom = 1; zoomCenter = {{ x: W / 2, y: H / 2 }}; applyZoom(); }});
     document.addEventListener('keydown', e => {{
       if (e.key==='Escape') {{
         activeNodeId=null; activeCluster=null;
