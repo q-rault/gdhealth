@@ -1,0 +1,48 @@
+---
+title: Understanding Code Health
+description: A practical guide to what gdhealth measures, what to do next, and what results cannot prove.
+---
+
+# Understanding code health
+
+gdhealth helps you decide where to look first. It reads GDScript text; it does not run your game or prove code is broken. Treat a high score as a priority signal, then use judgement.
+
+## The six questions
+
+- **Scope** — files and code size: *How much code exists?* Observe growth and act when ownership or review becomes difficult.
+- **Code shape** — functions, branches, nesting, and parameters: *How hard is this code to understand and test?* Schedule simplification for high control-flow load.
+- **Coupling** — dependencies, fan-in, fan-out, and cycles: *What else can affect this code, or be affected by it?* Act now on harmful cycles; schedule unusually broad fan-out.
+- **Priority** — hotspot and Git churn: *Where is improvement likely to pay off?* A hotspot that changes often is a strong improvement candidate.
+- **Evidence** — policies, duplicate code, and unresolved references: *What concrete evidence needs review?* Act on critical findings; observe expected dynamic references.
+- **Contracts and events** — signals, exports, RPC, groups, InputMap, and node bindings are runtime capabilities, not automatic problems.
+
+## Dependencies: pairs and relationships
+
+A **connected file pair** is one source-file → target-file connection after graph filters. A **declared relationship** is each static occurrence. If `ui.gd` both extends and preloads `base.gd`, that is one pair and two relationships.
+
+Declaring `signal died` is not an edge: it says the file *can* emit a signal. gdhealth draws a line only when it can statically identify both endpoints of a use. Dynamic loads and unknown signal receivers remain diagnostics so the graph does not invent links.
+
+## Examples and response guide
+
+- **High fan-in:** `inventory.gd` is used by 18 files. Change it carefully: many callers may be affected.
+- **High fan-out:** `gameplay_controller.gd` references 20 files. Consider whether it owns too many responsibilities.
+- **High control-flow load:** many branches and nested loops make paths harder to test. Split decisions into focused functions.
+- **Hotspot:** a large, connected file that changes often is likely to repay improvement work.
+
+**Act now:** critical policy findings, unexpected cycles, and unresolved targets blocking an architecture decision. **Schedule:** persistent hotspots, difficult control flow, large files, and repeated duplicates. **Observe:** warnings and deliberately shared services. **Ignore intentionally:** generated code and documented dynamic loading, after recording why.
+
+## Limits
+
+Analysis is text-based. Dynamic runtime paths, scene wiring, generated code, and values assembled at runtime may be absent or unresolved. Scores compare files in one report; they are not defect predictions or universal quality grades.
+
+## Glossary
+
+- **SLOC:** source lines of code.
+- **Dependency:** one file statically references another.
+- **Relation:** one occurrence of a recognized dependency kind.
+- **Coupling:** how strongly code is connected to other code.
+- **Cycle:** files depend on one another in a loop.
+- **Cluster:** files more connected to each other than to the rest of the graph.
+- **Policy finding:** a configured rule was exceeded.
+- **Hotspot:** a relative ranking combining code difficulty and coupling.
+- **Unresolved target:** a possible use whose endpoint could not be proven statically.

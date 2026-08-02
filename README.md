@@ -4,6 +4,8 @@
 
 ## Why use it
 
+New to code-health terminology? Read the [Understanding Code Health guide](docs/content/docs/understanding-code-health.mdx).
+
 - Surface dependency cycles and architecture violations before they compound
 - Identify the highest-complexity files and functions as refactor targets
 - Enforce size, complexity, and dependency rules in CI with exit-code semantics
@@ -129,6 +131,8 @@ with files that had real bugs (via the git prior-defect signal above), and print
 rather than a misleading number on small or young repositories.
 
 ## Current limits (new features)
+
+See [Understanding Code Health](docs/content/docs/understanding-code-health.mdx) for the practical limits of text-based static analysis and how to interpret scores.
 
 The git intelligence layer, `risk`, `validate-defects`, duplicate-code detection, and the
 `suggested_fix` field on cycle/split-file findings are new and still settling — treat their exact

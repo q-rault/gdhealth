@@ -19,6 +19,7 @@ const DEFAULT_METRIC_RADIUS_MULTIPLIER: f64 = 1.6;
 struct BrowserExport {
     metadata: BrowserMetadata,
     analysis_config: AnalysisConfig,
+    relation_legend: Vec<RelationLegendEntry>,
     graphs: GraphsExport,
     policy_summary: PolicySummaryExport,
     top_policy_findings: Vec<BrowserPolicyFinding>,
@@ -71,6 +72,18 @@ struct AnalysisConfig {
     heatmap_metric_key: &'static str,
 }
 
+/// Browser-only presentation metadata. Relationship keys in graph JSON remain stable.
+#[derive(Debug, Clone, Serialize)]
+struct RelationLegendEntry {
+    kind: &'static str,
+    label: &'static str,
+    explanation: &'static str,
+    color: &'static str,
+    dash_pattern: &'static str,
+    accessible_description: &'static str,
+    order: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct GraphsExport {
     file_result_dependency_graph: EnrichedGraphExport,
@@ -120,6 +133,7 @@ struct BrowserNode {
     metric_sloc_in_file: usize,
     metric_fan_in_dependency_graph: usize,
     metric_fan_out_dependency_graph: usize,
+    ws_complexity: usize,
     metric_file_result_dependency_graph_louvain_modularity_in_file: usize,
     metric_file_hotspot_score: usize,
 }
@@ -137,6 +151,9 @@ struct BrowserLink {
 struct GraphStatistics {
     node_count: usize,
     edge_count: usize,
+    /// Browser-only initial counts. `edge_count` remains the compatibility field.
+    visible_file_pair_count: usize,
+    visible_relation_count: usize,
     cycle_count: usize,
     parser_warning_count: usize,
     community_count: usize,
@@ -373,6 +390,7 @@ fn build_export_with_insights(
                 metric_sloc_in_file: file.line_count,
                 metric_fan_in_dependency_graph: metric.incoming_dependency_count,
                 metric_fan_out_dependency_graph: metric.outgoing_dependency_count,
+                ws_complexity: metric.ws_complexity,
                 metric_file_result_dependency_graph_louvain_modularity_in_file: metric
                     .louvain_modularity,
                 metric_file_hotspot_score: metric.file_hotspot_score,
@@ -406,6 +424,11 @@ fn build_export_with_insights(
         })
         .collect::<Vec<_>>();
     let file_link_count = links.len();
+    let file_pair_count = links
+        .iter()
+        .map(|link| (&link.source, &link.target))
+        .collect::<BTreeSet<_>>()
+        .len();
 
     let total_sloc = nodes.iter().map(|node| node.line_count).sum::<usize>();
     let file_cluster_metrics_map = build_cluster_metrics(&nodes, total_sloc);
@@ -536,6 +559,7 @@ fn build_export_with_insights(
             metric_radius_multiplier: DEFAULT_METRIC_RADIUS_MULTIPLIER,
             heatmap_metric_key: "metric_file_hotspot_score",
         },
+        relation_legend: relation_legend(),
         graphs: GraphsExport {
             file_result_dependency_graph: EnrichedGraphExport {
                 graph: GraphPayload {
@@ -550,6 +574,8 @@ fn build_export_with_insights(
                 statistics: GraphStatistics {
                     node_count: graph.files.len(),
                     edge_count: file_link_count,
+                    visible_file_pair_count: file_pair_count,
+                    visible_relation_count: file_link_count,
                     cycle_count: graph.cycles.len(),
                     parser_warning_count: graph.parser_warnings.len(),
                     community_count: file_graph_metrics.community_count,
@@ -735,6 +761,7 @@ fn build_entity_graph_export(
                 metric_sloc_in_file: entity.line_count,
                 metric_fan_in_dependency_graph: metric.incoming_dependency_count,
                 metric_fan_out_dependency_graph: metric.outgoing_dependency_count,
+                ws_complexity: metric.ws_complexity,
                 metric_file_result_dependency_graph_louvain_modularity_in_file: metric
                     .louvain_modularity,
                 metric_file_hotspot_score: metric.ws_complexity,
@@ -756,6 +783,11 @@ fn build_entity_graph_export(
         })
         .collect::<Vec<_>>();
     let entity_link_count = links.len();
+    let entity_pair_count = links
+        .iter()
+        .map(|link| (&link.source, &link.target))
+        .collect::<BTreeSet<_>>()
+        .len();
     let cluster_metrics_map = build_cluster_metrics(&nodes, total_sloc);
     let community_count = communities
         .iter()
@@ -774,6 +806,8 @@ fn build_entity_graph_export(
         statistics: GraphStatistics {
             node_count: entities.len(),
             edge_count: entity_link_count,
+            visible_file_pair_count: entity_pair_count,
+            visible_relation_count: entity_link_count,
             cycle_count: 0,
             parser_warning_count: 0,
             community_count,
@@ -846,6 +880,33 @@ fn dependency_kind_label(kind: &DependencyKind) -> &'static str {
         DependencyKind::ConstPreload => "const_preload",
         DependencyKind::UnknownScriptReference => "unknown_script_reference",
     }
+}
+
+fn relation_legend() -> Vec<RelationLegendEntry> {
+    vec![
+        ("extends", "Inheritance", "violet", "", "A script inherits from the referenced script."),
+        ("preload", "Preloaded script", "teal", "", "A script statically preloads the referenced script."),
+        ("const_preload", "Constant preloaded script", "green", "", "A constant statically preloads the referenced script."),
+        ("load", "Runtime-loaded script", "amber", "7 4", "A script calls load with a statically resolved target."),
+        ("unknown_script_reference", "Named class reference", "blue", "1 4", "A named class reference was statically resolved."),
+        ("signal_connection", "Event connection", "pink", "8 3 1 3", "A resolved event connection."),
+        ("autoload", "Global service access", "orange", "12 5", "A resolved global service access."),
+        ("scene_node", "Scene or node binding", "cyan", "1 4", "A resolved scene or node binding."),
+        ("group", "Group broadcast or lookup", "red", "8 3 1 3", "A resolved group broadcast or lookup."),
+        ("rpc", "Remote call", "indigo", "12 5", "A resolved remote call."),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(order, (kind, label, color, dash_pattern, explanation))| RelationLegendEntry {
+        kind,
+        label,
+        explanation,
+        color,
+        dash_pattern,
+        accessible_description: "Arrow points from the dependency user to the referenced file.",
+        order,
+    })
+    .collect()
 }
 
 fn build_parser_warning_counts(warnings: &[String]) -> BTreeMap<String, usize> {
@@ -1438,8 +1499,12 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       flex: none;
     }}
     .relation-filters {{ display:flex; flex-wrap:wrap; gap:5px; margin:8px 0 10px; }}
-    .relation-filter {{ font-size:11px; padding:4px 7px; border:1px solid var(--border-2); border-radius:999px; background:transparent; color:var(--text-2); cursor:pointer; }}
+    .relation-filter {{ display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:4px 7px; border:1px solid var(--border-2); border-radius:999px; background:transparent; color:var(--text-2); cursor:pointer; }}
     .relation-filter.active {{ background:var(--blue-bg); border-color:var(--blue); color:var(--blue); }}
+    .relation-line {{ width:18px; height:6px; flex:none; overflow:visible; }}
+    .details {{ margin-top:9px; border-top:1px solid var(--border); padding-top:6px; }}
+    .details summary {{ cursor:pointer; color:var(--text-2); font-size:11px; font-weight:600; }}
+    .details-body {{ margin:6px 0 2px; color:var(--text-3); font-size:10.5px; line-height:1.5; }}
     ::-webkit-scrollbar {{ width: 3px; }}
     ::-webkit-scrollbar-thumb {{ background: var(--border-2); border-radius: 2px; }}
     ::-webkit-scrollbar-track {{ background: transparent; }}
@@ -1543,7 +1608,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
   <div id="gdhealth-tooltip" role="tooltip"><div id="gdhealth-tooltip-body"></div></div>
   <script>
     const payload = JSON.parse(document.getElementById('graph-data').textContent);
-    const relationLabels = {{ extends: 'Inheritance', preload: 'Preload', const_preload: 'Const preload', load: 'Load', unknown_script_reference: 'Class reference' }};
+    const relationLegend = payload.relation_legend || [];
+    const relationStyles = Object.fromEntries(relationLegend.map(item => [item.kind, item]));
 
     const W = 960, H = 720;
     let graphPayload = null;
@@ -1661,10 +1727,16 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     // ── render: stats ──────────────────────────────────────────────
     let activeKinds = new Set();
     function visibleLinks() {{ return links.filter(lk => activeKinds.has(lk.kind)); }}
+    function relationStyle(kind) {{ return relationStyles[kind] || {{ label: kind, color: '#8b95a7', dash_pattern: '', explanation: `Static ${{kind}} relationship.`, accessible_description: 'Arrow points from the dependency user to the referenced file.', order: 999 }}; }}
     function renderRelationFilters() {{
-      const kinds = [...new Set(links.map(lk => lk.kind))].sort();
+      const kinds = [...new Set(links.map(lk => lk.kind))].sort((a,b) => relationStyle(a).order - relationStyle(b).order);
       if (!activeKinds.size) activeKinds = new Set(kinds);
-      relationFiltersEl.innerHTML = kinds.map(kind => `<button class="relation-filter${{activeKinds.has(kind) ? ' active' : ''}}" data-kind="${{kind}}">${{relationLabels[kind] || kind}}</button>`).join('');
+      relationFiltersEl.innerHTML = kinds.map(kind => {{
+        const style = relationStyle(kind);
+        const visible = visibleLinks().filter(link => link.kind === kind);
+        const pairs = new Set(visible.map(link => `${{link.source}}→${{link.target}}`)).size;
+        return `<button class="relation-filter${{activeKinds.has(kind) ? ' active' : ''}}" data-kind="${{kind}}" aria-label="${{style.label}}: ${{pairs}} visible file pairs and ${{visible.length}} relationship occurrences. ${{style.accessible_description}}" title="${{style.explanation}} ${{style.accessible_description}}"><svg class="relation-line" viewBox="0 0 18 6" aria-hidden="true"><line x1="0" y1="3" x2="18" y2="3" stroke="${{style.color}}" stroke-width="2" stroke-dasharray="${{style.dash_pattern}}"/></svg>${{style.label}} <span>${{pairs}}/${{visible.length}}</span></button>`;
+      }}).join('');
       relationFiltersEl.querySelectorAll('[data-kind]').forEach(button => button.addEventListener('click', () => {{
         const kind = button.dataset.kind;
         if (activeKinds.has(kind)) activeKinds.delete(kind); else activeKinds.add(kind);
@@ -1675,12 +1747,10 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       const ps = payload.policy_summary;
       statsEl.innerHTML = [
         ['Files', stats.node_count, 'Source files analyzed in this graph.'],
-        ['Edges', new Set(visibleLinks().map(l => `${{l.source}}→${{l.target}}`)).size, 'Unique resolved inter-file file pairs visible under the selected relationship filters. A declaration alone is not an edge.'],
-        ['Relations', visibleLinks().length, 'Resolved relationship occurrences visible under the selected filters.'],
-        ['Clusters', stats.community_count, 'Communities detected by Louvain clustering: files that are more connected to each other than to the rest of the project.'],
-        ['SLOC', stats.total_sloc.toLocaleString(), 'Source lines of code: physical lines in analyzed scripts, excluding non-code project assets.'],
-        ['Signal declarations', nodes.reduce((total, node) => total + node.signal_count, 0), 'GDScript signal declarations. Contextual only; they do not alter hotspot scores in this release.'],
-        ['Signal activity', nodes.reduce((total, node) => total + node.signal_emit_count + node.signal_connection_count, 0), 'Recognized signal emits and connections. They become graph relations only when their external owner and callback target can be resolved.'],
+        ['Files', stats.node_count, 'Analyzed source files in this report.'],
+        ['Code size', stats.total_sloc.toLocaleString() + ' SLOC', 'Approximate source lines of code to maintain.'],
+        ['Dependencies', `${{new Set(visibleLinks().map(l => `${{l.source}}→${{l.target}}`)).size}} connected pairs · ${{visibleLinks().length}} declared relationships`, 'Connected file pairs are unique source-to-target pairs after filters. Declared relationships are individual static occurrences; declarations alone are not relationships.'],
+        ['Attention', (ps.critical_count + ps.warning_count + ps.cycle_count) ? `${{ps.critical_count}} critical · ${{ps.warning_count}} warnings · ${{ps.cycle_count}} cycles` : 'No findings', 'Concrete findings and dependency cycles that merit review.'],
       ].map(([l,v,tip]) => `<div class="stat-card"><div class="stat-label has-tooltip" data-tooltip="${{tip}}">${{l}}</div><div class="stat-value">${{v}}</div></div>`).join('');
 
       badgesEl.innerHTML = [
@@ -1740,23 +1810,35 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       if (node.has_cycle) tags.push(`<span class="tag tag-red">cycle</span>`);
       if (node.parser_warning_count > 0) tags.push(`<span class="tag tag-yellow">${{node.parser_warning_count}} warnings</span>`);
       if (node.community_id != null) tags.push(`<span class="tag tag-blue">cluster ${{node.community_id}}</span>`);
+      const nodeLinks = links.filter(link => link.source === node.id || link.target === node.id);
+      const dependencyGroups = Object.entries(nodeLinks.reduce((groups, link) => {{
+        const direction = link.source === node.id ? 'Uses' : 'Used by';
+        const key = `${{direction}} · ${{relationStyle(link.kind).label}}`;
+        (groups[key] ||= []).push(link.source === node.id ? link.targetNode.display_name : link.sourceNode.display_name);
+        return groups;
+      }}, {{}}));
+      const eventCount = node.signal_count + node.signal_emit_count + node.signal_connection_count + node.unresolved_signal_reference_count;
+      const attention = node.has_cycle || node.parser_warning_count || node.unresolved_signal_reference_count
+        ? `${{node.has_cycle ? 'Cycle' : ''}}${{node.has_cycle && (node.parser_warning_count || node.unresolved_signal_reference_count) ? ' · ' : ''}}${{node.parser_warning_count ? node.parser_warning_count + ' warnings' : ''}}${{node.parser_warning_count && node.unresolved_signal_reference_count ? ' · ' : ''}}${{node.unresolved_signal_reference_count ? node.unresolved_signal_reference_count + ' unresolved' : ''}}`
+        : 'No findings';
+      const priorityBand = node.metric_file_hotspot_score >= maxHotspot * .66 ? 'high' : node.metric_file_hotspot_score >= maxHotspot * .33 ? 'medium' : 'low';
+      const fileFunctions = (payload.top_functions || []).filter(f => f.file === node.absolute_name);
+      const fileFindings = (payload.top_policy_findings || []).filter(f => f.file === node.absolute_name);
       selEl.className = '';
       selEl.innerHTML = `
         <div class="node-name" title="${{node.absolute_name}}">${{node.display_name}}</div>
         <div class="node-path">${{node.absolute_name}}</div>
         <div class="metric-grid">
-          <div class="metric-card" title="Total lines in this file."><div class="metric-label">Lines</div><div class="metric-value">${{node.line_count}}</div></div>
-          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Fan-in: how many analyzed files depend on this one. High fan-in means a widely reused, potentially sensitive component.">Fan-in</div><div class="metric-value">${{node.metric_fan_in_dependency_graph}}</div></div>
-          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Fan-out: how many analyzed files this one depends on. High fan-out can indicate too many responsibilities or tight coupling.">Fan-out</div><div class="metric-value">${{node.metric_fan_out_dependency_graph}}</div></div>
-          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="GDScript signal declarations in this file. Contextual only; they do not alter hotspot scores in this release.">Declarations</div><div class="metric-value">${{node.signal_count}}</div></div>
-          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Local signal emits. Contextual only; they do not alter hotspot scores in this release.">Emits</div><div class="metric-value">${{node.signal_emit_count}}</div></div>
-          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Local signal connections. Contextual only; they do not alter hotspot scores in this release.">Connections</div><div class="metric-value">${{node.signal_connection_count}}</div></div>
-          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Signal interactions whose ownership cannot be proven in this file. Contextual only; they do not alter hotspot scores in this release.">Unresolved</div><div class="metric-value">${{node.unresolved_signal_reference_count}}</div></div>
-          <div class="metric-card" title="Number of functions and methods."><div class="metric-label">Functions</div><div class="metric-value">${{node.function_count}}</div></div>
-          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Complexity: estimated branching effort across this file. Higher values mean more paths to understand and test.">Complexity</div><div class="metric-value">${{node.metric_file_result_dependency_graph_louvain_modularity_in_file}}</div></div>
-          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Hotspot: a structural priority signal combining size, complexity, and dependency coupling. Higher means a stronger refactoring candidate.">Hotspot</div><div class="metric-value" style="color:${{hotspotColor(node.metric_file_hotspot_score)}}">${{node.metric_file_hotspot_score}}</div></div>
+          <div class="metric-card" title="Larger files have more code to understand and modify."><div class="metric-label">Size</div><div class="metric-value">${{node.line_count}} lines · ${{node.function_count}} functions</div></div>
+          <div class="metric-card" title="Shows change impact and dependency surface."><div class="metric-label">Coupling</div><div class="metric-value">${{node.metric_fan_in_dependency_graph}} depend on it · ${{node.metric_fan_out_dependency_graph}} it depends on</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Aggregates branching and nesting across this file's functions. Higher values mean more paths to reason about and test.">Control-flow load</div><div class="metric-value">${{node.ws_complexity}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="A relative ranking aid combining difficult code with coupling; it is not a defect prediction.">Change priority</div><div class="metric-value" style="color:${{hotspotColor(node.metric_file_hotspot_score)}}">${{node.metric_file_hotspot_score}} · ${{priorityBand}}</div></div>
+          <div class="metric-card" title="Cycles, policy/parser warnings, and unresolved runtime references need investigation."><div class="metric-label">Attention</div><div class="metric-value">${{attention}}</div></div>
         </div>
-        ${{node.signal_declarations.length ? `<div class="node-path">Signals: ${{node.signal_declarations.join(', ')}}</div>` : ''}}
+        <details class="details"><summary>Dependency details</summary><div class="details-body">${{dependencyGroups.length ? dependencyGroups.map(([label, names]) => `<div>${{label}}: ${{names.join(', ')}}</div>`).join('') : 'No resolved file dependencies under the active filters.'}}</div></details>
+        ${{eventCount ? `<details class="details"><summary>Events & contracts</summary><div class="details-body">${{node.signal_count}} declarations · ${{node.signal_emit_count}} emits · ${{node.signal_connection_count}} connections · ${{node.unresolved_signal_reference_count}} unresolved targets${{node.signal_declarations.length ? `<br>Signals: ${{node.signal_declarations.join(', ')}}` : ''}}<br>Static resolution cannot prove dynamic runtime wiring.</div></details>` : ''}}
+        ${{fileFunctions.length ? `<details class="details"><summary>Code shape</summary><div class="details-body">${{fileFunctions.map(f => `${{f.function_name}}: ${{f.line_count}} lines · cyclomatic ${{f.cyclomatic_estimate}}`).join('<br>')}}</div></details>` : ''}}
+        ${{fileFindings.length ? `<details class="details"><summary>Findings for this file</summary><div class="details-body">${{fileFindings.map(f => `${{f.severity}}: ${{f.message}}`).join('<br>')}}</div></details>` : ''}}
         ${{tags.length ? `<div class="node-tags">${{tags.join('')}}</div>` : ''}}
       `;
     }}
@@ -1767,7 +1849,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       const active = flow.files.filter(f => f.declarations.length || f.signal_emit_count || f.signal_connection_count || f.unresolved_signal_reference_count)
         .sort((a,b) => ((b.signal_emit_count+b.signal_connection_count+b.declarations.length) - (a.signal_emit_count+a.signal_connection_count+a.declarations.length)) || a.file.localeCompare(b.file));
       const unresolved = flow.unresolved_references || [];
-      signalFlowEl.innerHTML = active.length ? active.map(f => `<div class="fn-item"><div class="fn-body"><div class="fn-name">${{f.file}}</div><div class="fn-file">${{f.declarations.length}} declarations · ${{f.signal_emit_count}} emits · ${{f.signal_connection_count}} connections</div>${{f.declarations.length ? `<div class="node-path">${{f.declarations.join(', ')}}</div>` : ''}}</div>${{f.unresolved_signal_reference_count ? `<span class="fn-score fn-score-mid">${{f.unresolved_signal_reference_count}} unresolved targets</span>` : ''}}</div>`).join('') : '<div class="empty-state">No signal activity.</div>';
+      signalFlowEl.innerHTML = active.length ? active.map(f => `<div class="fn-item"><div class="fn-body"><div class="fn-name">${{f.file}}</div><div class="fn-file">${{f.declarations.length}} declarations · ${{f.signal_emit_count}} emits · ${{f.signal_connection_count}} connections</div>${{f.declarations.length ? `<div class="node-path">${{f.declarations.join(', ')}}</div>` : ''}}</div>${{f.unresolved_signal_reference_count ? `<span class="fn-score fn-score-mid has-tooltip" data-tooltip="Unresolved targets are signal emits or connections whose receiving object, signal, or callback cannot be mapped to an analyzed file with high confidence. This commonly happens with local variables, scene wiring, autoloads, or dynamic runtime paths. It is a coverage diagnostic, not proof of a bug.">${{f.unresolved_signal_reference_count}} unresolved targets</span>` : ''}}</div>`).join('') : '<div class="empty-state">No signal activity.</div>';
       if (unresolved.length) signalFlowEl.innerHTML += unresolved.slice(0, 10).map(r => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">Unresolved signal target: ${{r.receiver || 'dynamic/local'}}.${{r.signal || 'signal'}}</div><div class="finding-file">${{r.file}}:${{r.line}} · ${{r.operation}} · receiver ownership cannot be proven statically</div></div></div>`).join('');
     }}
 
@@ -1955,23 +2037,25 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       const visIds = new Set(getVisibleNodes().map(n => n.id));
       const selNode = activeNodeId ? nodeMap.get(activeNodeId) : null;
       const nb = buildNeighborSet(selNode);
-      const visLinks = visibleLinks().filter(lk => visIds.has(lk.source) && visIds.has(lk.target));
+      const visibleOccurrences = visibleLinks().filter(lk => visIds.has(lk.source) && visIds.has(lk.target));
+      // Keep every occurrence for counts/details, but draw one stable edge per endpoint pair.
+      const visLinks = [...visibleOccurrences.reduce((pairs, link) => {{
+        const key = `${{link.source}}→${{link.target}}`;
+        const current = pairs.get(key);
+        if (!current || relationStyle(link.kind).order < relationStyle(current.kind).order) pairs.set(key, link);
+        return pairs;
+      }}, new Map()).values()];
 
       linkLayer.innerHTML = visLinks.map(lk => {{
         const isActive = !!(selNode && (lk.source===selNode.id||lk.target===selNode.id));
-        const sameCom = lk.sourceNode.community_id === lk.targetNode.community_id;
-        let stroke, sw, so;
+        const style = relationStyle(lk.kind);
+        let stroke = style.color, sw, so;
         if (isActive) {{
-          stroke = colorMode==='hotspot' ? '#D9813A' : communityColor(lk.sourceNode.community_id);
           sw = 2.5; so = 1;
-        }} else if (lk.cross_group) {{
-          stroke = 'var(--edge-cross)'; sw = 1; so = selNode && !isActive ? 0.06 : 0.55;
-        }} else if (sameCom && colorMode==='community') {{
-          stroke = communityColor(lk.sourceNode.community_id); sw = 1; so = selNode && !isActive ? 0.06 : 0.35;
         }} else {{
-          stroke = 'var(--edge-default)'; sw = 1; so = selNode && !isActive ? 0.04 : 0.18;
+          sw = 1.3; so = selNode && !isActive ? 0.06 : 0.65;
         }}
-        return `<line x1="${{lk.sourceNode.x.toFixed(1)}}" y1="${{lk.sourceNode.y.toFixed(1)}}" x2="${{lk.targetNode.x.toFixed(1)}}" y2="${{lk.targetNode.y.toFixed(1)}}" stroke="${{stroke}}" stroke-width="${{sw}}" stroke-opacity="${{so}}"/>`;
+        return `<line x1="${{lk.sourceNode.x.toFixed(1)}}" y1="${{lk.sourceNode.y.toFixed(1)}}" x2="${{lk.targetNode.x.toFixed(1)}}" y2="${{lk.targetNode.y.toFixed(1)}}" stroke="${{stroke}}" stroke-width="${{sw}}" stroke-opacity="${{so}}" stroke-dasharray="${{style.dash_pattern}}" aria-label="${{style.label}}. ${{style.accessible_description}}"/>`;
       }}).join('');
 
       nodeLayer.innerHTML = getVisibleNodes().map(n => {{
@@ -2390,13 +2474,18 @@ mod tests {
                 .contains_key("0")
         );
         assert!(json.contains("\"metric_fan_in_dependency_graph\""));
+        assert!(json.contains("\"ws_complexity\": 8"));
+        assert!(json.contains("\"relation_legend\""));
+        assert!(json.contains("\"visible_file_pair_count\": 2"));
         assert!(json.contains("\"cluster_metrics_map\""));
         assert!(json.contains("\"policy_summary\""));
         assert!(json.contains("\"top_functions\""));
         assert!(json.contains("\"signal_flow\""));
         let html = render_html(&json, "fixture");
         assert!(html.contains("id=\"gdhealth-tooltip\""));
-        assert!(html.contains("Signal activity"));
+        assert!(html.contains("Control-flow load"));
+        assert!(html.contains("Dependencies"));
+        assert!(!html.contains(">Complexity</div>"));
         assert!(html.contains("Unresolved signal target"));
     }
 }
