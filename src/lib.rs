@@ -60,21 +60,26 @@ pub fn run() -> Result<()> {
                 fs::emit_output(options.output.as_deref(), &rendered)
             }
             OutputFormat::EmergeJson => {
-                let graph = graph::build_graph(&config, &options)?;
-                let metrics = metrics::compute_metrics(&config, &options)?;
-                let rendered = output::browser::render_emerge_json(&graph, &metrics, &[], 0)?;
+                let artifacts = health::build_health_artifacts(&config, &options)?;
+                let rendered = output::browser::render_health_emerge_json(
+                    &artifacts.graph,
+                    &artifacts.metrics,
+                    &artifacts.policy.findings,
+                    artifacts.health.cross_group_dependencies.len(),
+                    &artifacts.git,
+                )?;
                 fs::emit_output(options.output.as_deref(), &rendered)
             }
             OutputFormat::EmergeHtml => {
-                let graph = graph::build_graph(&config, &options)?;
-                let metrics = metrics::compute_metrics(&config, &options)?;
-                output::browser::emit_emerge_html(
+                let artifacts = health::build_health_artifacts(&config, &options)?;
+                output::browser::emit_health_emerge_html(
                     options.root.as_path(),
                     options.output.as_deref(),
-                    &graph,
-                    &metrics,
-                    &[],
-                    0,
+                    &artifacts.graph,
+                    &artifacts.metrics,
+                    &artifacts.policy.findings,
+                    artifacts.health.cross_group_dependencies.len(),
+                    &artifacts.git,
                 )
             }
         },

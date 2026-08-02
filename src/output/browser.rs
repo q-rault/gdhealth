@@ -6,6 +6,7 @@ use crate::model::{
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs as std_fs;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_LINK_DISTANCE: f64 = 88.0;
@@ -23,7 +24,21 @@ struct BrowserExport {
     top_policy_findings: Vec<BrowserPolicyFinding>,
     top_functions: Vec<BrowserFunctionMetric>,
     signal_flow: crate::model::SignalFlowReport,
+    godot_insights: BrowserGodotInsights,
     insights: Option<BrowserInsights>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct BrowserGodotInsights {
+    autoloads: Vec<String>,
+    input_actions: Vec<String>,
+    input_action_uses: usize,
+    group_operations: usize,
+    rpc_endpoints: usize,
+    rpc_calls: usize,
+    exported_properties: usize,
+    node_bindings: usize,
+    lifecycle_callbacks: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -194,6 +209,26 @@ pub fn render_emerge_json(
     Ok(serde_json::to_string_pretty(&export)?)
 }
 
+/// Browser output is a health report even when requested through `graph`:
+/// consumers should never lose policy, duplication, or git context merely
+/// because of the output format used to request it.
+pub fn render_health_emerge_json(
+    graph: &GraphReport,
+    metrics: &MetricsReport,
+    policy_findings: &[PolicyFinding],
+    cross_group_dep_count: usize,
+    git: &GitIntelligenceReport,
+) -> Result<String> {
+    let export = build_export_with_insights(
+        graph,
+        metrics,
+        policy_findings,
+        cross_group_dep_count,
+        Some(git),
+    );
+    Ok(serde_json::to_string_pretty(&export)?)
+}
+
 pub fn emit_emerge_html(
     root: &Path,
     output: Option<&Path>,
@@ -269,6 +304,7 @@ fn build_export_with_insights(
     cross_group_dep_count: usize,
     git: Option<&GitIntelligenceReport>,
 ) -> BrowserExport {
+    let godot_insights = collect_godot_insights(Path::new(&graph.root), graph);
     let project_name = derive_project_name(&graph.root);
     let parser_warning_count_by_file = build_parser_warning_counts(&graph.parser_warnings);
     let cycle_membership = build_cycle_membership_map(&graph.cycles);
@@ -321,7 +357,13 @@ fn build_export_with_insights(
                 signal_emit_count: metric.signal_emit_count,
                 signal_connection_count: metric.signal_connection_count,
                 unresolved_signal_reference_count: metric.unresolved_signal_reference_count,
-                signal_declarations: metrics.signal_flow.files.iter().find(|flow| flow.file == file.path).map(|flow| flow.declarations.clone()).unwrap_or_default(),
+                signal_declarations: metrics
+                    .signal_flow
+                    .files
+                    .iter()
+                    .find(|flow| flow.file == file.path)
+                    .map(|flow| flow.declarations.clone())
+                    .unwrap_or_default(),
                 parser_warning_count,
                 has_cycle: cycle_membership.contains(file.path.as_str()),
                 community_id: community_by_file
@@ -376,7 +418,10 @@ fn build_export_with_insights(
         .iter()
         .map(|metric| (metric.entity.as_str(), metric))
         .collect::<BTreeMap<_, _>>();
-    let signal_declarations_by_file = metrics.signal_flow.files.iter()
+    let signal_declarations_by_file = metrics
+        .signal_flow
+        .files
+        .iter()
         .map(|flow| (flow.file.as_str(), flow.declarations.clone()))
         .collect::<BTreeMap<_, _>>();
     let entity_dependency_export = build_entity_graph_export(
@@ -541,8 +586,84 @@ fn build_export_with_insights(
         top_policy_findings,
         top_functions,
         signal_flow: metrics.signal_flow.clone(),
+        godot_insights,
         insights,
     }
+}
+
+/// A deliberately conservative inventory of engine-level constructs. These
+/// remain metadata until an owner/target can be proven; inventing file edges
+/// for a dynamic NodePath, group, or InputMap string would make the graph lie.
+fn collect_godot_insights(root: &Path, graph: &GraphReport) -> BrowserGodotInsights {
+    let mut result = BrowserGodotInsights::default();
+    let project = std_fs::read_to_string(root.join("project.godot")).unwrap_or_default();
+    let mut input_section = false;
+    let mut autoload_section = false;
+    for raw in project.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            input_section = line == "[input]";
+            autoload_section = line == "[autoload]";
+            continue;
+        }
+        if let Some((name, value)) = line.split_once('=') {
+            let name = name.trim();
+            let value = value.trim();
+            if autoload_section
+                && value.contains("res://")
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            {
+                result.autoloads.push(name.to_string());
+            }
+            if input_section
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            {
+                result.input_actions.push(name.to_string());
+            }
+        }
+    }
+    result.autoloads.sort();
+    result.autoloads.dedup();
+    result.input_actions.sort();
+    result.input_actions.dedup();
+
+    for file in &graph.files {
+        let content = std_fs::read_to_string(root.join(&file.path)).unwrap_or_default();
+        for line in content.lines() {
+            let code = line.split('#').next().unwrap_or("");
+            result.input_action_uses += code.matches("Input.is_action_").count()
+                + code.matches("Input.get_axis(").count()
+                + code.matches("Input.get_vector(").count();
+            result.group_operations += code.matches("add_to_group(").count()
+                + code.matches("remove_from_group(").count()
+                + code.matches("get_nodes_in_group(").count()
+                + code.matches("call_group(").count()
+                + code.matches("call_group_flags(").count();
+            result.rpc_calls += code.matches(".rpc(").count() + code.matches(".rpc_id(").count();
+            result.exported_properties += code.matches("@export").count();
+            result.node_bindings += code.matches("get_node(").count()
+                + code.matches("get_node_or_null(").count()
+                + code.matches("@onready").count()
+                + code.matches('$').count();
+            result.rpc_endpoints += code.matches("@rpc").count();
+            for callback in [
+                "_enter_tree(",
+                "_ready(",
+                "_exit_tree(",
+                "_process(",
+                "_physics_process(",
+                "_input(",
+                "_unhandled_input(",
+            ] {
+                result.lifecycle_callbacks += code.matches(callback).count();
+            }
+        }
+    }
+    result
 }
 
 fn format_refactor_suggestion(file: Option<&str>, suggestion: &RefactorSuggestion) -> String {
@@ -556,8 +677,13 @@ fn format_refactor_suggestion(file: Option<&str>, suggestion: &RefactorSuggestio
                 .join(", ");
             format!("Break cycle in {target}: remove {edges}")
         }
-        RefactorSuggestion::SplitFile { proposed_groups, .. } => {
-            format!("Split {target} into {} cohesive groups", proposed_groups.len())
+        RefactorSuggestion::SplitFile {
+            proposed_groups, ..
+        } => {
+            format!(
+                "Split {target} into {} cohesive groups",
+                proposed_groups.len()
+            )
         }
     }
 }
@@ -596,7 +722,10 @@ fn build_entity_graph_export(
                 signal_emit_count: metric.signal_emit_count,
                 signal_connection_count: metric.signal_connection_count,
                 unresolved_signal_reference_count: metric.unresolved_signal_reference_count,
-                signal_declarations: signal_declarations_by_file.get(entity.file.as_str()).cloned().unwrap_or_default(),
+                signal_declarations: signal_declarations_by_file
+                    .get(entity.file.as_str())
+                    .cloned()
+                    .unwrap_or_default(),
                 parser_warning_count: 0,
                 has_cycle: false,
                 community_id: community_by_id
@@ -1308,6 +1437,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       background: var(--border);
       flex: none;
     }}
+    .relation-filters {{ display:flex; flex-wrap:wrap; gap:5px; margin:8px 0 10px; }}
+    .relation-filter {{ font-size:11px; padding:4px 7px; border:1px solid var(--border-2); border-radius:999px; background:transparent; color:var(--text-2); cursor:pointer; }}
+    .relation-filter.active {{ background:var(--blue-bg); border-color:var(--blue); color:var(--blue); }}
     ::-webkit-scrollbar {{ width: 3px; }}
     ::-webkit-scrollbar-thumb {{ background: var(--border-2); border-radius: 2px; }}
     ::-webkit-scrollbar-track {{ background: transparent; }}
@@ -1328,8 +1460,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       </div>
       <div class="panel-body">
         <div class="section">
-          <select id="graph-type" class="select"></select>
-          <span id="graph-view-help" class="has-tooltip" tabindex="0" data-tooltip="">ⓘ About this view</span>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="One file-centric architecture graph. Toggle relationship categories without changing graph views.">Architecture relations</span></div>
+          <div id="relation-filters" class="relation-filters"></div>
           <input id="search" class="search" type="search" placeholder="Search files or groups…">
         </div>
         <div class="section">
@@ -1373,6 +1505,11 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <div id="signal-flow" class="scroll-list"></div>
         </div>
         <div class="divider"></div>
+        <div class="section">
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Godot engine contracts found statically. They are shown as inventory until gdhealth can prove a concrete file-to-file runtime target.">Godot architecture</span></div>
+          <div id="godot-insights" class="fn-list"></div>
+        </div>
+        <div class="divider"></div>
         <div class="section" style="flex:1;min-height:0;min-height:140px;">
           <div class="section-label">
             <span class="has-tooltip" data-tooltip="Rules that exceed configured architecture or complexity thresholds. Critical findings need immediate attention; warnings should be reviewed.">Policy findings</span>
@@ -1406,21 +1543,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
   <div id="gdhealth-tooltip" role="tooltip"><div id="gdhealth-tooltip-body"></div></div>
   <script>
     const payload = JSON.parse(document.getElementById('graph-data').textContent);
-    const graphTypeLabels = {{
-      file_result_dependency_graph: 'File dependencies',
-      entity_result_dependency_graph: 'Entity dependencies',
-      entity_result_inheritance_graph: 'Entity inheritance',
-      entity_result_complete_graph: 'Entity dependencies + inheritance'
-    }};
-    const graphTypeDescriptions = {{
-      file_result_dependency_graph: 'File dependencies: imports, preloads, loads, and inheritance links between script files.',
-      entity_result_dependency_graph: 'Entity dependencies: references between discovered classes and top-level code entities.',
-      entity_result_inheritance_graph: 'Entity inheritance: extends relationships between classes.',
-      entity_result_complete_graph: 'Entity complete: dependency and inheritance relationships combined in one view.'
-    }};
+    const relationLabels = {{ extends: 'Inheritance', preload: 'Preload', const_preload: 'Const preload', load: 'Load', unknown_script_reference: 'Class reference' }};
 
     const W = 960, H = 720;
-    let graphType = payload.analysis_config.default_graph_type;
     let graphPayload = null;
     let nodes = [], nodeMap = new Map(), links = [], clusters = [], stats = null;
     let activeCluster = null, activeNodeId = null, draggingNode = null;
@@ -1434,8 +1559,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     const clustersEl = document.getElementById('clusters');
     const statsEl = document.getElementById('stats');
     const badgesEl = document.getElementById('health-badges');
-    const graphTypeEl = document.getElementById('graph-type');
-    const graphViewHelpEl = document.getElementById('graph-view-help');
+    const relationFiltersEl = document.getElementById('relation-filters');
     const searchEl = document.getElementById('search');
     const policyEl = document.getElementById('policy-findings');
     const hotFnEl = document.getElementById('hot-functions');
@@ -1443,6 +1567,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     const duplicateInsightsEl = document.getElementById('duplicate-insights');
     const refactorInsightsEl = document.getElementById('refactor-insights');
     const signalFlowEl = document.getElementById('signal-flow');
+    const godotInsightsEl = document.getElementById('godot-insights');
     const policyAside = document.getElementById('policy-count-aside');
     const hotspotLegend = document.getElementById('hotspot-legend');
     const svg = document.getElementById('graph');
@@ -1534,15 +1659,28 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     window.addEventListener('scroll', placeTooltip, true);
 
     // ── render: stats ──────────────────────────────────────────────
+    let activeKinds = new Set();
+    function visibleLinks() {{ return links.filter(lk => activeKinds.has(lk.kind)); }}
+    function renderRelationFilters() {{
+      const kinds = [...new Set(links.map(lk => lk.kind))].sort();
+      if (!activeKinds.size) activeKinds = new Set(kinds);
+      relationFiltersEl.innerHTML = kinds.map(kind => `<button class="relation-filter${{activeKinds.has(kind) ? ' active' : ''}}" data-kind="${{kind}}">${{relationLabels[kind] || kind}}</button>`).join('');
+      relationFiltersEl.querySelectorAll('[data-kind]').forEach(button => button.addEventListener('click', () => {{
+        const kind = button.dataset.kind;
+        if (activeKinds.has(kind)) activeKinds.delete(kind); else activeKinds.add(kind);
+        renderRelationFilters(); renderStats(); draw();
+      }}));
+    }}
     function renderStats() {{
       const ps = payload.policy_summary;
       statsEl.innerHTML = [
         ['Files', stats.node_count, 'Source files analyzed in this graph.'],
-        ['Edges', stats.edge_count, 'Dependency connections between files.'],
+        ['Edges', new Set(visibleLinks().map(l => `${{l.source}}→${{l.target}}`)).size, 'Unique resolved inter-file file pairs visible under the selected relationship filters. A declaration alone is not an edge.'],
+        ['Relations', visibleLinks().length, 'Resolved relationship occurrences visible under the selected filters.'],
         ['Clusters', stats.community_count, 'Communities detected by Louvain clustering: files that are more connected to each other than to the rest of the project.'],
         ['SLOC', stats.total_sloc.toLocaleString(), 'Source lines of code: physical lines in analyzed scripts, excluding non-code project assets.'],
         ['Signal declarations', nodes.reduce((total, node) => total + node.signal_count, 0), 'GDScript signal declarations. Contextual only; they do not alter hotspot scores in this release.'],
-        ['Signal activity', nodes.reduce((total, node) => total + node.signal_emit_count + node.signal_connection_count, 0), 'Local GDScript signal emits and connections. Contextual only; they do not alter hotspot scores in this release.'],
+        ['Signal activity', nodes.reduce((total, node) => total + node.signal_emit_count + node.signal_connection_count, 0), 'Recognized signal emits and connections. They become graph relations only when their external owner and callback target can be resolved.'],
       ].map(([l,v,tip]) => `<div class="stat-card"><div class="stat-label has-tooltip" data-tooltip="${{tip}}">${{l}}</div><div class="stat-value">${{v}}</div></div>`).join('');
 
       badgesEl.innerHTML = [
@@ -1629,8 +1767,22 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       const active = flow.files.filter(f => f.declarations.length || f.signal_emit_count || f.signal_connection_count || f.unresolved_signal_reference_count)
         .sort((a,b) => ((b.signal_emit_count+b.signal_connection_count+b.declarations.length) - (a.signal_emit_count+a.signal_connection_count+a.declarations.length)) || a.file.localeCompare(b.file));
       const unresolved = flow.unresolved_references || [];
-      signalFlowEl.innerHTML = active.length ? active.map(f => `<div class="fn-item"><div class="fn-body"><div class="fn-name">${{f.file}}</div><div class="fn-file">${{f.declarations.length}} declarations · ${{f.signal_emit_count}} emits · ${{f.signal_connection_count}} connections</div>${{f.declarations.length ? `<div class="node-path">${{f.declarations.join(', ')}}</div>` : ''}}</div>${{f.unresolved_signal_reference_count ? `<span class="fn-score fn-score-mid">${{f.unresolved_signal_reference_count}} unresolved external reference</span>` : ''}}</div>`).join('') : '<div class="empty-state">No signal activity.</div>';
-      if (unresolved.length) signalFlowEl.innerHTML += unresolved.slice(0, 10).map(r => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">unresolved external reference: ${{r.receiver || 'local'}}.${{r.signal || 'signal'}}</div><div class="finding-file">${{r.file}}:${{r.line}} · ${{r.operation}}</div></div></div>`).join('');
+      signalFlowEl.innerHTML = active.length ? active.map(f => `<div class="fn-item"><div class="fn-body"><div class="fn-name">${{f.file}}</div><div class="fn-file">${{f.declarations.length}} declarations · ${{f.signal_emit_count}} emits · ${{f.signal_connection_count}} connections</div>${{f.declarations.length ? `<div class="node-path">${{f.declarations.join(', ')}}</div>` : ''}}</div>${{f.unresolved_signal_reference_count ? `<span class="fn-score fn-score-mid">${{f.unresolved_signal_reference_count}} unresolved targets</span>` : ''}}</div>`).join('') : '<div class="empty-state">No signal activity.</div>';
+      if (unresolved.length) signalFlowEl.innerHTML += unresolved.slice(0, 10).map(r => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">Unresolved signal target: ${{r.receiver || 'dynamic/local'}}.${{r.signal || 'signal'}}</div><div class="finding-file">${{r.file}}:${{r.line}} · ${{r.operation}} · receiver ownership cannot be proven statically</div></div></div>`).join('');
+    }}
+
+    function renderGodotInsights() {{
+      const g = payload.godot_insights || {{}};
+      const rows = [
+        ['Autoloads', (g.autoloads || []).length, (g.autoloads || []).join(', ') || 'None declared in project.godot'],
+        ['Input actions', (g.input_actions || []).length, `${{g.input_action_uses || 0}} static uses`],
+        ['Groups', g.group_operations || 0, 'Membership, lookup, or broadcast operations'],
+        ['RPC', (g.rpc_endpoints || 0) + (g.rpc_calls || 0), `${{g.rpc_endpoints || 0}} endpoints · ${{g.rpc_calls || 0}} calls`],
+        ['Exports', g.exported_properties || 0, 'Serialized editor/resource contract fields'],
+        ['Node bindings', g.node_bindings || 0, '$, get_node, or @onready references'],
+        ['Lifecycle', g.lifecycle_callbacks || 0, 'Engine callbacks']
+      ];
+      godotInsightsEl.innerHTML = rows.map(([name, value, detail]) => `<div class="fn-item"><div class="fn-body"><div class="fn-name">${{name}}</div><div class="fn-file">${{detail}}</div></div><div class="fn-score fn-score-low">${{value}}</div></div>`).join('');
     }}
 
     // ── render: policy findings ────────────────────────────────────
@@ -1803,7 +1955,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       const visIds = new Set(getVisibleNodes().map(n => n.id));
       const selNode = activeNodeId ? nodeMap.get(activeNodeId) : null;
       const nb = buildNeighborSet(selNode);
-      const visLinks = links.filter(lk => visIds.has(lk.source) && visIds.has(lk.target));
+      const visLinks = visibleLinks().filter(lk => visIds.has(lk.source) && visIds.has(lk.target));
 
       linkLayer.innerHTML = visLinks.map(lk => {{
         const isActive = !!(selNode && (lk.source===selNode.id||lk.target===selNode.id));
@@ -1914,19 +2066,6 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       draw();
     }});
 
-    // ── graph type ─────────────────────────────────────────────────
-    graphTypeEl.innerHTML = payload.analysis_config.graph_types.map(t =>
-      `<option value="${{t}}"${{t===payload.analysis_config.default_graph_type?' selected':''}}>${{graphTypeLabels[t]||t}}</option>`
-    ).join('');
-    function updateGraphViewHelp() {{
-      const description = graphTypeDescriptions[graphTypeEl.value];
-      graphTypeEl.title = description;
-      graphViewHelpEl.dataset.tooltip = description;
-      if (tooltipTrigger === graphViewHelpEl) showTooltip(graphViewHelpEl);
-    }}
-    updateGraphViewHelp();
-    graphTypeEl.addEventListener('change', () => {{ updateGraphViewHelp(); activateGraph(graphTypeEl.value); }});
-
     // ── color mode ─────────────────────────────────────────────────
     document.getElementById('mode-community').addEventListener('click', () => {{
       colorMode='community';
@@ -1944,9 +2083,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     }});
 
     // ── activate graph ─────────────────────────────────────────────
-    function activateGraph(type) {{
-      graphType = type;
-      graphPayload = payload.graphs[type];
+    function activateGraph() {{
+      graphPayload = payload.graphs.file_result_dependency_graph;
       nodes = graphPayload.graph.nodes.map((n,i) => ({{...n,index:i}}));
       nodeMap = new Map(nodes.map(n => [n.id,n]));
       links = graphPayload.graph.links.map(lk => ({{
@@ -1957,11 +2095,13 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       clusters = Object.values(graphPayload.cluster_metrics_map).sort((a,b)=>a.community_id-b.community_id);
       stats = graphPayload.statistics;
       maxHotspot = Math.max(...nodes.map(n=>n.metric_file_hotspot_score), 1);
+      activeKinds = new Set(links.map(lk => lk.kind));
       activeCluster=null; activeNodeId=null; draggingNode=null;
       selEl.className='empty-state';
       selEl.textContent='Click a node or cluster to inspect.';
       assignInitialLayout();
       stabilizeLayout(160);
+      renderRelationFilters();
       renderStats();
       renderClusters();
       draw();
@@ -1972,8 +2112,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     renderHotFunctions();
     renderInsights();
     renderSignalFlow();
+    renderGodotInsights();
     applyZoom();
-    activateGraph(graphType);
+    activateGraph();
   </script>
 </body>
 </html>"#
@@ -2218,7 +2359,11 @@ mod tests {
                     louvain_modularity: 0,
                 },
             ],
-            signal_flow: crate::model::SignalFlowReport { available: true, files: Vec::new(), unresolved_references: Vec::new() },
+            signal_flow: crate::model::SignalFlowReport {
+                available: true,
+                files: Vec::new(),
+                unresolved_references: Vec::new(),
+            },
             duplication: crate::model::DuplicationReport {
                 available: true,
                 unavailable_reason: None,
@@ -2252,6 +2397,6 @@ mod tests {
         let html = render_html(&json, "fixture");
         assert!(html.contains("id=\"gdhealth-tooltip\""));
         assert!(html.contains("Signal activity"));
-        assert!(html.contains("unresolved external reference"));
+        assert!(html.contains("Unresolved signal target"));
     }
 }
