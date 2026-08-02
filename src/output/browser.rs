@@ -33,6 +33,19 @@ struct BrowserExport {
 struct BrowserGodotInsights {
     autoloads: Vec<String>,
     input_actions: Vec<String>,
+    files: BTreeMap<String, BrowserGodotFileInsights>,
+    input_action_uses: usize,
+    group_operations: usize,
+    rpc_endpoints: usize,
+    rpc_calls: usize,
+    exported_properties: usize,
+    node_bindings: usize,
+    lifecycle_callbacks: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct BrowserGodotFileInsights {
+    autoload_accesses: usize,
     input_action_uses: usize,
     group_operations: usize,
     rpc_endpoints: usize,
@@ -657,25 +670,32 @@ fn collect_godot_insights(root: &Path, graph: &GraphReport) -> BrowserGodotInsig
     result.input_actions.sort();
     result.input_actions.dedup();
 
+    let autoloads = result.autoloads.clone();
     for file in &graph.files {
         let content = std_fs::read_to_string(root.join(&file.path)).unwrap_or_default();
+        let file_result = result.files.entry(file.path.clone()).or_default();
         for line in content.lines() {
             let code = line.split('#').next().unwrap_or("");
-            result.input_action_uses += code.matches("Input.is_action_").count()
+            let autoload_accesses = autoloads
+                .iter()
+                .filter(|autoload| code.contains(autoload.as_str()))
+                .count();
+            let input_action_uses = code.matches("Input.is_action_").count()
                 + code.matches("Input.get_axis(").count()
                 + code.matches("Input.get_vector(").count();
-            result.group_operations += code.matches("add_to_group(").count()
+            let group_operations = code.matches("add_to_group(").count()
                 + code.matches("remove_from_group(").count()
                 + code.matches("get_nodes_in_group(").count()
                 + code.matches("call_group(").count()
                 + code.matches("call_group_flags(").count();
-            result.rpc_calls += code.matches(".rpc(").count() + code.matches(".rpc_id(").count();
-            result.exported_properties += code.matches("@export").count();
-            result.node_bindings += code.matches("get_node(").count()
+            let rpc_calls = code.matches(".rpc(").count() + code.matches(".rpc_id(").count();
+            let exported_properties = code.matches("@export").count();
+            let node_bindings = code.matches("get_node(").count()
                 + code.matches("get_node_or_null(").count()
                 + code.matches("@onready").count()
                 + code.matches('$').count();
-            result.rpc_endpoints += code.matches("@rpc").count();
+            let rpc_endpoints = code.matches("@rpc").count();
+            let mut lifecycle_callbacks = 0;
             for callback in [
                 "_enter_tree(",
                 "_ready(",
@@ -685,8 +705,23 @@ fn collect_godot_insights(root: &Path, graph: &GraphReport) -> BrowserGodotInsig
                 "_input(",
                 "_unhandled_input(",
             ] {
-                result.lifecycle_callbacks += code.matches(callback).count();
+                lifecycle_callbacks += code.matches(callback).count();
             }
+            result.input_action_uses += input_action_uses;
+            result.group_operations += group_operations;
+            result.rpc_calls += rpc_calls;
+            result.exported_properties += exported_properties;
+            result.node_bindings += node_bindings;
+            result.rpc_endpoints += rpc_endpoints;
+            result.lifecycle_callbacks += lifecycle_callbacks;
+            file_result.autoload_accesses += autoload_accesses;
+            file_result.input_action_uses += input_action_uses;
+            file_result.group_operations += group_operations;
+            file_result.rpc_calls += rpc_calls;
+            file_result.exported_properties += exported_properties;
+            file_result.node_bindings += node_bindings;
+            file_result.rpc_endpoints += rpc_endpoints;
+            file_result.lifecycle_callbacks += lifecycle_callbacks;
         }
     }
     result
@@ -1117,11 +1152,14 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       color: var(--text);
     }}
     .app {{
+      --left-width: 256px;
+      --right-width: 284px;
       display: grid;
-      grid-template-columns: 256px 1fr 284px;
+      grid-template-columns: var(--left-width) minmax(0, 1fr) var(--right-width);
       height: 100vh;
       gap: 1px;
       background: var(--border);
+      position: relative;
     }}
     .panel {{
       background: var(--panel);
@@ -1164,6 +1202,16 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     .section {{ display: flex; flex-direction: column; gap: 7px; }}
     .app > aside:last-child .section {{ max-height: 230px; min-height: 0; overflow-y: auto; padding-right: 3px; }}
     .app > aside:last-child #selection-section {{ max-height: 380px; flex: none; }}
+    .right-focus {{ position:absolute; right:0; top:0; width:16px; height:16px; padding:0; border:0; border-radius:4px; color:var(--text-2); background:transparent; cursor:pointer; font-size:12px; line-height:16px; visibility:hidden; }}
+    .app > aside:last-child .section-label:hover .right-focus, .right-focus:focus {{ visibility:visible; }}
+    .right-focus:hover {{ color:var(--text); background:var(--panel-3); }}
+    .app > aside:last-child .panel-body.right-expanded > :not(.section.is-expanded) {{ display:none !important; }}
+    .app > aside:last-child .panel-body.right-expanded .section.is-expanded {{ display:flex !important; max-height:none !important; flex:1 !important; overflow-y:auto; }}
+    .app > aside:last-child .panel-body.right-expanded .section.is-expanded .section-label {{ position:sticky; top:0; z-index:2; background:var(--panel); }}
+    .resize-handle {{ position:absolute; z-index:20; top:0; bottom:0; width:8px; cursor:col-resize; touch-action:none; }}
+    .resize-handle:hover, .resize-handle.active {{ background:rgba(94,106,210,.28); }}
+    #left-resize {{ left:calc(var(--left-width) - 4px); }}
+    #right-resize {{ right:calc(var(--right-width) - 4px); }}
     .section-label {{
       font-size: 10.5px;
       font-weight: 500;
@@ -1175,10 +1223,12 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      position: relative;
+      padding-right: 20px;
     }}
     .has-tooltip {{ cursor: help; border-bottom: 1px dotted var(--text-3); }}
-    #gdhealth-tooltip {{ position: fixed; z-index: 1000; width: min(320px, calc(100vw - 16px)); padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 7px; background: #24242B; color: var(--text); font-size: 11px; font-weight: 400; line-height: 1.45; letter-spacing: 0; text-transform: none; box-shadow: 0 8px 24px rgba(0,0,0,.35); pointer-events: none; overflow: hidden; visibility: hidden; }}
-    #gdhealth-tooltip-body {{ overflow-y: auto; max-height: inherit; }}
+    #gdhealth-tooltip {{ position: fixed; z-index: 1000; width: fit-content; max-width: min(240px, calc(100vw - 16px)); padding: 6px 8px; border: 1px solid var(--border-2); border-radius: 6px; background: #24242B; color: var(--text); font-size: 11px; font-weight: 400; line-height: 1.35; letter-spacing: 0; text-transform: none; box-shadow: 0 8px 24px rgba(0,0,0,.35); pointer-events: none; overflow: hidden; visibility: hidden; }}
+    #gdhealth-tooltip-body {{ overflow-y: auto; max-height: inherit; overflow-wrap: anywhere; word-break: break-word; }}
     .section-aside {{
       font-size: 10px;
       font-weight: 400;
@@ -1508,6 +1558,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     .details {{ margin-top:9px; border-top:1px solid var(--border); padding-top:6px; }}
     .details summary {{ cursor:pointer; color:var(--text-2); font-size:11px; font-weight:600; }}
     .details-body {{ margin:6px 0 2px; color:var(--text-3); font-size:10.5px; line-height:1.5; }}
+    .selected-file-list {{ max-height:110px; overflow-y:auto; margin-top:10px; border-top:1px solid var(--border); padding-top:6px; }}
+    .selected-file-path {{ color:var(--text-2); font-size:10.5px; line-height:1.45; overflow-wrap:anywhere; padding:2px 0; }}
     ::-webkit-scrollbar {{ width: 3px; }}
     ::-webkit-scrollbar-thumb {{ background: var(--border-2); border-radius: 2px; }}
     ::-webkit-scrollbar-track {{ background: transparent; }}
@@ -1516,11 +1568,14 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       html, body {{ height: auto; overflow: auto; }}
       .canvas-panel {{ height: 60vh; }}
       .panel-body {{ max-height: none; overflow: visible; }}
+      .resize-handle {{ display:none; }}
     }}
   </style>
 </head>
 <body>
   <div class="app">
+    <div id="left-resize" class="resize-handle" title="Resize left sidebar"></div>
+    <div id="right-resize" class="resize-handle" title="Resize right sidebar"></div>
     <aside class="panel">
       <div class="panel-header">
         <span class="tool-label">gdhealth</span>
@@ -1554,7 +1609,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     <main class="panel canvas-panel">
       <svg id="graph" viewBox="0 0 960 720" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="canvas-overlay bottom-right" style="display:flex;gap:4px;align-items:center;bottom:auto;top:12px;"><button class="seg" id="zoom-out" title="Zoom out">−</button><button class="seg" id="zoom-reset" title="Reset zoom">100%</button><button class="seg" id="zoom-in" title="Zoom in">+</button></div>
-      <div class="canvas-overlay bottom-left">Click scripts to select them · Drag empty space to select an area · Esc clears selection</div>
+      <div class="canvas-overlay bottom-left">Click scripts to select them · Drag a script to move it · Drag empty space to select an area · Esc clears selection</div>
       <div class="canvas-overlay bottom-right hidden" id="hotspot-legend">
         <div class="heatbar"></div>
         <div class="heatbar-labels"><span>Low</span><span>High</span></div>
@@ -1618,6 +1673,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     let graphPayload = null;
     let nodes = [], nodeMap = new Map(), links = [], clusters = [], stats = null;
     let activeCluster = null, activeNodeId = null, selectedNodeIds = new Set();
+    let draggingNode = null, nodeDragJustFinished = false;
     let marqueeStart = null, marqueeMoved = false, marqueeJustFinished = false;
     let colorMode = 'community';
     let maxHotspot = 1;
@@ -1641,10 +1697,52 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     const policyAside = document.getElementById('policy-count-aside');
     const hotspotLegend = document.getElementById('hotspot-legend');
     const svg = document.getElementById('graph');
+    const appEl = document.querySelector('.app');
     const linkLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const selectionLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const nodeLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     svg.append(linkLayer, selectionLayer, nodeLayer);
+
+    function setupRightSectionFocus() {{
+      const rightBody = document.querySelector('.app > aside:last-child .panel-body');
+      rightBody.querySelectorAll('.section').forEach(section => {{
+        const label = section.querySelector('.section-label');
+        if (!label) return;
+        const button = document.createElement('button');
+        button.className = 'right-focus';
+        button.type = 'button';
+        button.title = 'Expand this section';
+        button.setAttribute('aria-label', 'Expand this section');
+        button.textContent = '⤢';
+        button.addEventListener('click', () => {{
+          const expanded = section.classList.contains('is-expanded');
+          rightBody.classList.toggle('right-expanded', !expanded);
+          section.classList.toggle('is-expanded', !expanded);
+          button.textContent = expanded ? '⤢' : '−';
+          button.title = expanded ? 'Expand this section' : 'Minimize section';
+          button.setAttribute('aria-label', button.title);
+        }});
+        label.append(button);
+      }});
+    }}
+    function setupSidebarResize() {{
+      let resizing = null;
+      const left = document.getElementById('left-resize');
+      const right = document.getElementById('right-resize');
+      const begin = side => event => {{ resizing = side; event.currentTarget.classList.add('active'); event.preventDefault(); }};
+      left.addEventListener('mousedown', begin('left'));
+      right.addEventListener('mousedown', begin('right'));
+      window.addEventListener('mousemove', event => {{
+        if (!resizing) return;
+        if (resizing === 'left') appEl.style.setProperty('--left-width', `${{Math.max(180, Math.min(520, event.clientX))}}px`);
+        else appEl.style.setProperty('--right-width', `${{Math.max(220, Math.min(520, window.innerWidth - event.clientX))}}px`);
+      }});
+      window.addEventListener('mouseup', () => {{
+        if (!resizing) return;
+        document.getElementById(resizing + '-resize').classList.remove('active');
+        resizing = null;
+      }});
+    }}
 
     function applyZoom() {{
       const width = W / zoom, height = H / zoom;
@@ -1828,7 +1926,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         const policyCount = (payload.top_policy_findings || []).filter(f => selected.some(n => n.absolute_name === f.file)).length;
         const review = [policyCount ? `${{policyCount}} policy findings` : '', cycles ? `${{cycles}} cycles` : '', warnings ? `${{warnings}} parser warnings` : '', unresolved ? `${{unresolved}} unresolved` : ''].filter(Boolean).join(' · ') || 'No findings';
         selEl.className = '';
-        selEl.innerHTML = `<div class="node-name">${{selected.length}} scripts selected</div><div class="node-path">Aggregated values; change priority shows the highest selected script.</div><div class="metric-grid"><div class="metric-card"><div class="metric-label">Size</div><div class="metric-value">${{totalLines}} lines · ${{totalFunctions}} functions</div></div><div class="metric-card"><div class="metric-label">Script connections</div><div class="metric-value">Used by ${{incoming.size}} scripts · Uses ${{outgoing.size}} scripts</div></div><div class="metric-card"><div class="metric-label">Control-flow load</div><div class="metric-value">${{controlFlow}}</div></div><div class="metric-card" title="Highest change-priority score among the selected scripts."><div class="metric-label">Highest change priority</div><div class="metric-value" style="color:${{hotspotColor(highestPriority)}}">${{highestPriority}}</div></div><div class="metric-card"><div class="metric-label">Policy findings & warnings</div><div class="metric-value">${{review}}</div></div></div>`;
+        selEl.innerHTML = `<div class="node-name">${{selected.length}} scripts selected</div><div class="node-path">Aggregated values; change priority shows the highest selected script.</div><div class="metric-grid"><div class="metric-card"><div class="metric-label">Size</div><div class="metric-value">${{totalLines}} lines · ${{totalFunctions}} functions</div></div><div class="metric-card"><div class="metric-label">Script connections</div><div class="metric-value">Used by ${{incoming.size}} scripts · Uses ${{outgoing.size}} scripts</div></div><div class="metric-card"><div class="metric-label">Control-flow load</div><div class="metric-value">${{controlFlow}}</div></div><div class="metric-card" title="Highest change-priority score among the selected scripts."><div class="metric-label">Highest change priority</div><div class="metric-value" style="color:${{hotspotColor(highestPriority)}}">${{highestPriority}}</div></div><div class="metric-card"><div class="metric-label">Policy findings & warnings</div><div class="metric-value">${{review}}</div></div></div><div class="selected-file-list"><div class="metric-label">Selected scripts</div>${{selected.slice().sort((a,b) => a.absolute_name.localeCompare(b.absolute_name)).map(n => `<div class="selected-file-path">${{n.absolute_name}}</div>`).join('')}}</div>`;
         return;
       }}
       if (!node) return;
@@ -1881,10 +1979,24 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     }}
 
     function renderGodotInsights() {{
-      const selectedFiles = selectedNodes().map(n => n.absolute_name);
-      if (selectedFiles.length) {{ godotInsightsEl.innerHTML = '<div class="empty-state">Per-file Godot architecture inventory is not available in this report yet.</div>'; return; }}
       const g = payload.godot_insights || {{}};
-      const rows = [
+      const selected = selectedNodes();
+      const perFile = g.files || {{}};
+      const selectedInventory = selected.reduce((total, node) => {{
+        const item = perFile[node.absolute_name] || {{}};
+        for (const key of ['autoload_accesses','input_action_uses','group_operations','rpc_endpoints','rpc_calls','exported_properties','node_bindings','lifecycle_callbacks']) total[key] = (total[key] || 0) + (item[key] || 0);
+        return total;
+      }}, {{}});
+      const data = selected.length ? selectedInventory : g;
+      const rows = selected.length ? [
+        ['Autoload access', data.autoload_accesses || 0, `Static global-service uses across ${{selected.length}} selected scripts`],
+        ['Input actions', data.input_action_uses || 0, 'Static InputMap uses'],
+        ['Groups', data.group_operations || 0, 'Membership, lookup, or broadcast operations'],
+        ['RPC', (data.rpc_endpoints || 0) + (data.rpc_calls || 0), `${{data.rpc_endpoints || 0}} endpoints · ${{data.rpc_calls || 0}} calls`],
+        ['Exports', data.exported_properties || 0, 'Serialized editor/resource contract fields'],
+        ['Node bindings', data.node_bindings || 0, '$, get_node, or @onready references'],
+        ['Lifecycle', data.lifecycle_callbacks || 0, 'Engine callbacks']
+      ] : [
         ['Autoloads', (g.autoloads || []).length, (g.autoloads || []).join(', ') || 'None declared in project.godot'],
         ['Input actions', (g.input_actions || []).length, `${{g.input_action_uses || 0}} static uses`],
         ['Groups', g.group_operations || 0, 'Membership, lookup, or broadcast operations'],
@@ -2080,6 +2192,13 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       const visIds = new Set(getVisibleNodes().map(n => n.id));
       const selNode = activeNodeId ? nodeMap.get(activeNodeId) : null;
       const nb = buildNeighborSet(selNode);
+      for (const selectedId of selectedNodeIds) {{
+        nb.add(selectedId);
+        for (const link of links) {{
+          if (link.source === selectedId) nb.add(link.target);
+          if (link.target === selectedId) nb.add(link.source);
+        }}
+      }}
       const visibleOccurrences = visibleLinks().filter(lk => visIds.has(lk.source) && visIds.has(lk.target));
       // Keep every occurrence for counts/details, but draw one stable edge per endpoint pair.
       const visLinks = [...visibleOccurrences.reduce((pairs, link) => {{
@@ -2090,13 +2209,13 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       }}, new Map()).values()];
 
       linkLayer.innerHTML = visLinks.map(lk => {{
-        const isActive = !!(selNode && (lk.source===selNode.id||lk.target===selNode.id));
+        const isActive = selectedNodeIds.has(lk.source) || selectedNodeIds.has(lk.target);
         const style = relationStyle(lk.kind);
         let stroke = style.color, sw, so;
         if (isActive) {{
           sw = 2.5; so = 1;
         }} else {{
-          sw = 1.3; so = selNode && !isActive ? 0.06 : 0.65;
+          sw = 1.3; so = selectedNodeIds.size && !isActive ? 0.06 : 0.65;
         }}
         if (lk.source === lk.target) {{
           const loopRadius = 11 + Math.sqrt(lk.sourceNode.metric_fan_in_dependency_graph + lk.sourceNode.metric_fan_out_dependency_graph + 1) * 1.9;
@@ -2107,12 +2226,12 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
       nodeLayer.innerHTML = getVisibleNodes().map(n => {{
         const isActive = selectedNodeIds.has(n.id);
-        const visible = !selNode || nb.has(n.id) || selectedNodeIds.has(n.id);
+        const visible = selectedNodeIds.size === 0 || nb.has(n.id);
         const fill = nodeColor(n);
         const r = 5.5 + Math.sqrt(n.metric_fan_in_dependency_graph+n.metric_fan_out_dependency_graph+1)*1.9;
-        const showLabel = isActive || (selNode && visible) ||
-          (!selNode && colorMode==='hotspot' && n.metric_file_hotspot_score > maxHotspot*0.38) ||
-          (!selNode && colorMode==='community' && n.metric_fan_in_dependency_graph+n.metric_fan_out_dependency_graph >= 3);
+        const showLabel = isActive || (selectedNodeIds.size && visible) ||
+          (!selectedNodeIds.size && colorMode==='hotspot' && n.metric_file_hotspot_score > maxHotspot*0.38) ||
+          (!selectedNodeIds.size && colorMode==='community' && n.metric_fan_in_dependency_graph+n.metric_fan_out_dependency_graph >= 3);
         const fo = visible ? 1 : 0.12;
         let extras = '';
         if (isActive) {{
@@ -2122,7 +2241,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           extras += `<circle r="${{(r+4).toFixed(1)}}" fill="none" stroke="${{fill}}" stroke-width="1" stroke-dasharray="3 2" stroke-opacity="${{visible ? 0.65 : 0.08}}"/>`;
         }}
         return `
-          <g data-nid="${{n.id}}" transform="translate(${{n.x.toFixed(1)}} ${{n.y.toFixed(1)}})">
+          <g data-nid="${{n.id}}" data-tooltip="${{n.absolute_name}}" transform="translate(${{n.x.toFixed(1)}} ${{n.y.toFixed(1)}})">
             ${{extras}}
             <circle r="${{r.toFixed(1)}}" fill="${{fill}}" fill-opacity="${{fo*0.92}}" stroke="${{isActive ? '#fff' : 'rgba(255,255,255,0.18)'}}" stroke-width="${{isActive ? 2 : 1}}" stroke-opacity="${{fo}}"/>
             <text pointer-events="none" y="${{-(r+7)}}" text-anchor="middle" font-size="10.5" font-family="-apple-system,BlinkMacSystemFont,'Inter',sans-serif" fill="${{isActive ? '#fff' : 'var(--text-2)'}}" fill-opacity="${{showLabel ? fo : 0}}">${{n.display_name}}</text>
@@ -2132,15 +2251,15 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
       nodeLayer.querySelectorAll('[data-nid]').forEach(g => {{
         g.style.cursor = 'pointer';
-        g.addEventListener('mouseenter', () => {{
-          updateSelection(nodeMap.get(g.dataset.nid));
+        g.addEventListener('mousedown', e => {{
+          draggingNode = nodeMap.get(g.dataset.nid);
+          nodeDragJustFinished = false;
+          e.stopPropagation();
+          e.preventDefault();
         }});
-        g.addEventListener('mouseleave', () => {{
-          updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null);
-        }});
-        g.addEventListener('mousedown', e => e.stopPropagation());
         g.addEventListener('click', e => {{
           e.stopPropagation();
+          if (nodeDragJustFinished) {{ nodeDragJustFinished = false; return; }}
           const n = nodeMap.get(g.dataset.nid);
           if (selectedNodeIds.has(n.id)) {{
             selectedNodeIds.delete(n.id);
@@ -2174,6 +2293,14 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       e.preventDefault();
     }});
     svg.addEventListener('mousemove', e => {{
+      if (draggingNode) {{
+        const point = graphPoint(e);
+        draggingNode.x = point.x; draggingNode.y = point.y;
+        draggingNode.vx = 0; draggingNode.vy = 0;
+        nodeDragJustFinished = true;
+        draw();
+        return;
+      }}
       if (!marqueeStart) return;
       const point = graphPoint(e);
       const x = Math.min(marqueeStart.x, point.x), y = Math.min(marqueeStart.y, point.y);
@@ -2189,6 +2316,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       }}
     }});
     window.addEventListener('mouseup', e => {{
+      if (draggingNode) {{ draggingNode = null; return; }}
       if (!marqueeStart) return;
       const end = graphPoint(e);
       if (marqueeMoved) {{
@@ -2254,7 +2382,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         sourceNode: nodeMap.get(lk.source),
         targetNode: nodeMap.get(lk.target)
       }})).filter(lk => lk.sourceNode && lk.targetNode);
-      clusters = Object.values(graphPayload.cluster_metrics_map).sort((a,b)=>a.community_id-b.community_id);
+      clusters = Object.values(graphPayload.cluster_metrics_map).sort((a,b)=>(b.node_count-a.node_count) || (a.community_id-b.community_id));
       stats = graphPayload.statistics;
       maxHotspot = Math.max(...nodes.map(n=>n.metric_file_hotspot_score), 1);
       activeKinds = new Set(links.map(lk => lk.kind));
@@ -2271,6 +2399,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
     // ── boot ───────────────────────────────────────────────────────
     renderRightPanels();
+    setupRightSectionFocus();
+    setupSidebarResize();
     applyZoom();
     activateGraph();
   </script>
