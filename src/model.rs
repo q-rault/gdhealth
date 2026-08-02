@@ -82,6 +82,9 @@ pub struct FileMetric {
     pub function_count: usize,
     pub number_of_methods: usize,
     pub signal_count: usize,
+    pub signal_emit_count: usize,
+    pub signal_connection_count: usize,
+    pub unresolved_signal_reference_count: usize,
     pub public_function_count: usize,
     pub outgoing_dependency_count: usize,
     pub incoming_dependency_count: usize,
@@ -100,9 +103,42 @@ pub struct MetricsReport {
     pub files: Vec<FileMetric>,
     pub functions: Vec<FunctionMetric>,
     pub entities: Vec<EntityMetric>,
+    pub signal_flow: SignalFlowReport,
     /// Experimental — token-kind clone detection, not yet a stable API
     /// surface (same posture as `entity_scan` when it was introduced).
     pub duplication: DuplicationReport,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SignalFlowReport {
+    pub available: bool,
+    pub files: Vec<SignalFileFlow>,
+    pub unresolved_references: Vec<UnresolvedSignalReference>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SignalFileFlow {
+    pub file: String,
+    pub declarations: Vec<String>,
+    pub signal_emit_count: usize,
+    pub signal_connection_count: usize,
+    pub unresolved_signal_reference_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum SignalOperation {
+    Emit,
+    Connect,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct UnresolvedSignalReference {
+    pub file: String,
+    pub line: usize,
+    pub operation: SignalOperation,
+    pub signal: Option<String>,
+    pub receiver: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +218,10 @@ pub struct EntityMetric {
     pub file: String,
     pub line_count: usize,
     pub method_count: usize,
+    pub signal_count: usize,
+    pub signal_emit_count: usize,
+    pub signal_connection_count: usize,
+    pub unresolved_signal_reference_count: usize,
     pub ws_complexity: usize,
     pub tfidf: f64,
     pub incoming_dependency_count: usize,
@@ -232,6 +272,10 @@ pub struct HealthSummary {
     pub file_count: usize,
     pub edge_count: usize,
     pub policy_finding_count: usize,
+    pub signal_declaration_count: usize,
+    pub signal_emit_count: usize,
+    pub signal_connection_count: usize,
+    pub unresolved_signal_reference_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

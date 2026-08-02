@@ -8,6 +8,8 @@ use crate::error::{GdHealthError, Result};
 use crate::graph::build_graph;
 use crate::isolate::isolate;
 use crate::model::{FileMetric, FunctionMetric, MetricsReport, OutputMetadata};
+use crate::model::{SignalFileFlow, SignalFlowReport};
+use crate::parser::signal_flow::analyze_signal_flow;
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs;
@@ -51,10 +53,13 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
 
     let mut file_metrics = Vec::new();
     let mut function_metrics = Vec::new();
+    let mut signal_files = Vec::new();
+    let mut unresolved_signal_references = Vec::new();
 
     for file in &graph.files {
         let content = read_file(root, &file.path)?;
         let analysis = analyze_file(&file.path, &content);
+        let signal_flow = analyze_signal_flow(&file.path, &content);
         let outgoing_dependency_count = graph
             .edges
             .iter()
@@ -110,7 +115,10 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
             line_count: file.line_count,
             function_count: file_function_metrics.len(),
             number_of_methods: file_function_metrics.len(),
-            signal_count: analysis.signal_count,
+            signal_count: signal_flow.declarations.len(),
+            signal_emit_count: signal_flow.emit_count,
+            signal_connection_count: signal_flow.connection_count,
+            unresolved_signal_reference_count: signal_flow.unresolved_references.len(),
             public_function_count: file_function_metrics
                 .iter()
                 .filter(|function| !function.function_name.starts_with('_'))
@@ -128,6 +136,14 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
         });
 
         function_metrics.extend(file_function_metrics);
+        unresolved_signal_references.extend(signal_flow.unresolved_references);
+        signal_files.push(SignalFileFlow {
+            file: file.path.clone(),
+            declarations: signal_flow.declarations,
+            signal_emit_count: signal_flow.emit_count,
+            signal_connection_count: signal_flow.connection_count,
+            unresolved_signal_reference_count: file_metrics.last().expect("file metric just added").unresolved_signal_reference_count,
+        });
     }
 
     file_metrics.sort_by(|left, right| {
@@ -148,6 +164,11 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
             .then_with(|| left.start_line.cmp(&right.start_line))
             .then_with(|| left.function_name.cmp(&right.function_name))
     });
+    signal_files.sort_by(|left, right| left.file.cmp(&right.file));
+    unresolved_signal_references.sort_by(|left, right| {
+        (&left.file, left.line, &left.operation, &left.signal, &left.receiver)
+            .cmp(&(&right.file, right.line, &right.operation, &right.signal, &right.receiver))
+    });
 
     let entity_scan = build_entity_scan(root, &graph, &file_metrics)?;
     let entity_metrics = build_entity_metrics(&entity_scan, &file_metrics);
@@ -162,6 +183,11 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
         files: file_metrics,
         functions: function_metrics,
         entities: entity_metrics,
+        signal_flow: SignalFlowReport {
+            available: true,
+            files: signal_files,
+            unresolved_references: unresolved_signal_references,
+        },
         duplication: duplication_report,
     })
 }
@@ -222,6 +248,7 @@ fn compute_file_hotspot_score(
 
 #[derive(Debug)]
 pub(crate) struct FileAnalysis {
+    #[allow(dead_code)] // retained for direct metric-analysis tests and symbol tooling
     signal_count: usize,
     pub(crate) functions: Vec<FunctionAnalysis>,
 }

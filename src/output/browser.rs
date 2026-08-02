@@ -22,6 +22,7 @@ struct BrowserExport {
     policy_summary: PolicySummaryExport,
     top_policy_findings: Vec<BrowserPolicyFinding>,
     top_functions: Vec<BrowserFunctionMetric>,
+    signal_flow: crate::model::SignalFlowReport,
     insights: Option<BrowserInsights>,
 }
 
@@ -94,6 +95,10 @@ struct BrowserNode {
     line_count: usize,
     function_count: usize,
     signal_count: usize,
+    signal_emit_count: usize,
+    signal_connection_count: usize,
+    unresolved_signal_reference_count: usize,
+    signal_declarations: Vec<String>,
     parser_warning_count: usize,
     has_cycle: bool,
     community_id: usize,
@@ -313,6 +318,10 @@ fn build_export_with_insights(
                 line_count: file.line_count,
                 function_count: metric.function_count,
                 signal_count: metric.signal_count,
+                signal_emit_count: metric.signal_emit_count,
+                signal_connection_count: metric.signal_connection_count,
+                unresolved_signal_reference_count: metric.unresolved_signal_reference_count,
+                signal_declarations: metrics.signal_flow.files.iter().find(|flow| flow.file == file.path).map(|flow| flow.declarations.clone()).unwrap_or_default(),
                 parser_warning_count,
                 has_cycle: cycle_membership.contains(file.path.as_str()),
                 community_id: community_by_file
@@ -367,11 +376,15 @@ fn build_export_with_insights(
         .iter()
         .map(|metric| (metric.entity.as_str(), metric))
         .collect::<BTreeMap<_, _>>();
+    let signal_declarations_by_file = metrics.signal_flow.files.iter()
+        .map(|flow| (flow.file.as_str(), flow.declarations.clone()))
+        .collect::<BTreeMap<_, _>>();
     let entity_dependency_export = build_entity_graph_export(
         "entity_result_dependency_graph",
         &entity_scan.entities,
         &entity_scan.dependency_edges,
         &entity_metric_by_id,
+        &signal_declarations_by_file,
         &entity_scan.communities,
         entity_scan.complete_graph_metrics.total_sloc,
     );
@@ -380,6 +393,7 @@ fn build_export_with_insights(
         &entity_scan.entities,
         &entity_scan.inheritance_edges,
         &entity_metric_by_id,
+        &signal_declarations_by_file,
         &entity_scan.communities,
         entity_scan.complete_graph_metrics.total_sloc,
     );
@@ -388,6 +402,7 @@ fn build_export_with_insights(
         &entity_scan.entities,
         &entity_scan.complete_edges,
         &entity_metric_by_id,
+        &signal_declarations_by_file,
         &entity_scan.communities,
         entity_scan.complete_graph_metrics.total_sloc,
     );
@@ -525,6 +540,7 @@ fn build_export_with_insights(
         policy_summary,
         top_policy_findings,
         top_functions,
+        signal_flow: metrics.signal_flow.clone(),
         insights,
     }
 }
@@ -551,6 +567,7 @@ fn build_entity_graph_export(
     entities: &[crate::model::EntityNode],
     edges: &[EntityEdge],
     entity_metric_by_id: &BTreeMap<&str, &EntityMetric>,
+    signal_declarations_by_file: &BTreeMap<&str, Vec<String>>,
     communities: &[crate::model::GraphCommunity],
     total_sloc: usize,
 ) -> EnrichedGraphExport {
@@ -575,7 +592,11 @@ fn build_entity_graph_export(
                     .unwrap_or_else(|| "root".to_string()),
                 line_count: entity.line_count,
                 function_count: entity.method_count,
-                signal_count: 0,
+                signal_count: metric.signal_count,
+                signal_emit_count: metric.signal_emit_count,
+                signal_connection_count: metric.signal_connection_count,
+                unresolved_signal_reference_count: metric.unresolved_signal_reference_count,
+                signal_declarations: signal_declarations_by_file.get(entity.file.as_str()).cloned().unwrap_or_default(),
                 parser_warning_count: 0,
                 has_cycle: false,
                 community_id: community_by_id
@@ -963,15 +984,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       align-items: center;
       justify-content: space-between;
     }}
-    .has-tooltip {{ position: relative; cursor: help; border-bottom: 1px dotted var(--text-3); }}
-    .has-tooltip::after {{
-      content: attr(data-tooltip); position: absolute; z-index: 20; left: 0; bottom: calc(100% + 8px);
-      width: min(260px, 75vw); padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 7px;
-      background: #24242B; color: var(--text); font-size: 11px; font-weight: 400; line-height: 1.45;
-      letter-spacing: 0; text-transform: none; box-shadow: 0 8px 24px rgba(0,0,0,.35);
-      opacity: 0; pointer-events: none; transform: translateY(3px); transition: opacity .14s ease, transform .14s ease;
-    }}
-    .has-tooltip:hover::after, .has-tooltip:focus-visible::after {{ opacity: 1; transform: translateY(0); }}
+    .has-tooltip {{ cursor: help; border-bottom: 1px dotted var(--text-3); }}
+    #gdhealth-tooltip {{ position: fixed; z-index: 1000; width: min(320px, calc(100vw - 16px)); padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 7px; background: #24242B; color: var(--text); font-size: 11px; font-weight: 400; line-height: 1.45; letter-spacing: 0; text-transform: none; box-shadow: 0 8px 24px rgba(0,0,0,.35); pointer-events: none; overflow: hidden; visibility: hidden; }}
+    #gdhealth-tooltip-body {{ overflow-y: auto; max-height: inherit; }}
     .section-aside {{
       font-size: 10px;
       font-weight: 400;
@@ -1301,7 +1316,6 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       html, body {{ height: auto; overflow: auto; }}
       .canvas-panel {{ height: 60vh; }}
       .panel-body {{ max-height: none; overflow: visible; }}
-      .has-tooltip::after {{ left: 0; bottom: auto; top: calc(100% + 8px); }}
     }}
   </style>
 </head>
@@ -1354,6 +1368,11 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <div id="selection" class="empty-state">Click a node or cluster to inspect.</div>
         </div>
         <div class="divider"></div>
+        <div class="section">
+          <div class="section-label">Signal flow</div>
+          <div id="signal-flow" class="scroll-list"></div>
+        </div>
+        <div class="divider"></div>
         <div class="section" style="flex:1;min-height:0;min-height:140px;">
           <div class="section-label">
             <span class="has-tooltip" data-tooltip="Rules that exceed configured architecture or complexity thresholds. Critical findings need immediate attention; warnings should be reviewed.">Policy findings</span>
@@ -1384,6 +1403,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
   </div>
 
   <script id="graph-data" type="application/json">{data_json}</script>
+  <div id="gdhealth-tooltip" role="tooltip"><div id="gdhealth-tooltip-body"></div></div>
   <script>
     const payload = JSON.parse(document.getElementById('graph-data').textContent);
     const graphTypeLabels = {{
@@ -1422,6 +1442,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     const gitInsightsEl = document.getElementById('git-insights');
     const duplicateInsightsEl = document.getElementById('duplicate-insights');
     const refactorInsightsEl = document.getElementById('refactor-insights');
+    const signalFlowEl = document.getElementById('signal-flow');
     const policyAside = document.getElementById('policy-count-aside');
     const hotspotLegend = document.getElementById('hotspot-legend');
     const svg = document.getElementById('graph');
@@ -1468,6 +1489,50 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       return typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(2) : String(v);
     }}
 
+    const tooltip = document.getElementById('gdhealth-tooltip');
+    const tooltipBody = document.getElementById('gdhealth-tooltip-body');
+    let tooltipTrigger = null;
+    function placeTooltip() {{
+      if (!tooltipTrigger) return;
+      const rect = tooltipTrigger.getBoundingClientRect();
+      tooltip.style.maxHeight = `${{Math.max(1, window.innerHeight - 16)}}px`;
+      tooltipBody.style.maxHeight = `${{Math.max(1, window.innerHeight - 32)}}px`;
+      tooltip.style.visibility = 'hidden';
+      tooltip.style.display = 'block';
+      const tip = tooltip.getBoundingClientRect();
+      const gutter = 8;
+      let top = rect.top - tip.height - 8;
+      if (top < gutter) top = rect.bottom + 8;
+      top = Math.max(gutter, Math.min(top, window.innerHeight - tip.height - gutter));
+      const left = Math.max(gutter, Math.min(rect.left + rect.width / 2 - tip.width / 2, window.innerWidth - tip.width - gutter));
+      tooltip.style.left = `${{left}}px`;
+      tooltip.style.top = `${{top}}px`;
+      tooltip.style.visibility = 'visible';
+    }}
+    function showTooltip(trigger) {{
+      const message = trigger.dataset.tooltip;
+      if (!message) return;
+      tooltipTrigger = trigger;
+      tooltipBody.textContent = message;
+      trigger.setAttribute('aria-describedby', 'gdhealth-tooltip');
+      placeTooltip();
+    }}
+    function hideTooltip() {{
+      if (tooltipTrigger) tooltipTrigger.removeAttribute('aria-describedby');
+      tooltipTrigger = null;
+      tooltip.style.display = 'none';
+      tooltip.style.visibility = 'hidden';
+    }}
+    document.addEventListener('mouseover', event => {{ const trigger = event.target.closest('[data-tooltip]'); if (trigger) showTooltip(trigger); }});
+    document.addEventListener('mouseout', event => {{ const trigger = event.target.closest('[data-tooltip]'); if (trigger && !trigger.contains(event.relatedTarget)) hideTooltip(); }});
+    document.addEventListener('focusin', event => {{ const trigger = event.target.closest('[data-tooltip]'); if (trigger) showTooltip(trigger); }});
+    document.addEventListener('focusout', event => {{ if (tooltipTrigger && !tooltipTrigger.contains(event.relatedTarget)) hideTooltip(); }});
+    document.addEventListener('pointerdown', event => {{ const trigger = event.target.closest('[data-tooltip]'); if (trigger && event.pointerType !== 'mouse') showTooltip(trigger); else if (!trigger) hideTooltip(); }});
+    document.addEventListener('keydown', event => {{ if (event.key === 'Escape') hideTooltip(); }});
+    window.addEventListener('resize', placeTooltip);
+    window.addEventListener('orientationchange', placeTooltip);
+    window.addEventListener('scroll', placeTooltip, true);
+
     // ── render: stats ──────────────────────────────────────────────
     function renderStats() {{
       const ps = payload.policy_summary;
@@ -1476,7 +1541,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         ['Edges', stats.edge_count, 'Dependency connections between files.'],
         ['Clusters', stats.community_count, 'Communities detected by Louvain clustering: files that are more connected to each other than to the rest of the project.'],
         ['SLOC', stats.total_sloc.toLocaleString(), 'Source lines of code: physical lines in analyzed scripts, excluding non-code project assets.'],
-        ['Signals', nodes.reduce((total, node) => total + node.signal_count, 0), 'GDScript signal declarations found in the current graph view. Signals are event hooks that scripts can emit and connect to.'],
+        ['Signal declarations', nodes.reduce((total, node) => total + node.signal_count, 0), 'GDScript signal declarations. Contextual only; they do not alter hotspot scores in this release.'],
+        ['Signal activity', nodes.reduce((total, node) => total + node.signal_emit_count + node.signal_connection_count, 0), 'Local GDScript signal emits and connections. Contextual only; they do not alter hotspot scores in this release.'],
       ].map(([l,v,tip]) => `<div class="stat-card"><div class="stat-label has-tooltip" data-tooltip="${{tip}}">${{l}}</div><div class="stat-value">${{v}}</div></div>`).join('');
 
       badgesEl.innerHTML = [
@@ -1544,13 +1610,27 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <div class="metric-card" title="Total lines in this file."><div class="metric-label">Lines</div><div class="metric-value">${{node.line_count}}</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Fan-in: how many analyzed files depend on this one. High fan-in means a widely reused, potentially sensitive component.">Fan-in</div><div class="metric-value">${{node.metric_fan_in_dependency_graph}}</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Fan-out: how many analyzed files this one depends on. High fan-out can indicate too many responsibilities or tight coupling.">Fan-out</div><div class="metric-value">${{node.metric_fan_out_dependency_graph}}</div></div>
-          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Signals: GDScript event declarations on this file. They expose events that other scripts can connect to.">Signals</div><div class="metric-value">${{node.signal_count}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="GDScript signal declarations in this file. Contextual only; they do not alter hotspot scores in this release.">Declarations</div><div class="metric-value">${{node.signal_count}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Local signal emits. Contextual only; they do not alter hotspot scores in this release.">Emits</div><div class="metric-value">${{node.signal_emit_count}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Local signal connections. Contextual only; they do not alter hotspot scores in this release.">Connections</div><div class="metric-value">${{node.signal_connection_count}}</div></div>
+          <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Signal interactions whose ownership cannot be proven in this file. Contextual only; they do not alter hotspot scores in this release.">Unresolved</div><div class="metric-value">${{node.unresolved_signal_reference_count}}</div></div>
           <div class="metric-card" title="Number of functions and methods."><div class="metric-label">Functions</div><div class="metric-value">${{node.function_count}}</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Complexity: estimated branching effort across this file. Higher values mean more paths to understand and test.">Complexity</div><div class="metric-value">${{node.metric_file_result_dependency_graph_louvain_modularity_in_file}}</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Hotspot: a structural priority signal combining size, complexity, and dependency coupling. Higher means a stronger refactoring candidate.">Hotspot</div><div class="metric-value" style="color:${{hotspotColor(node.metric_file_hotspot_score)}}">${{node.metric_file_hotspot_score}}</div></div>
         </div>
+        ${{node.signal_declarations.length ? `<div class="node-path">Signals: ${{node.signal_declarations.join(', ')}}</div>` : ''}}
         ${{tags.length ? `<div class="node-tags">${{tags.join('')}}</div>` : ''}}
       `;
+    }}
+
+    function renderSignalFlow() {{
+      const flow = payload.signal_flow;
+      if (!flow || !flow.files) {{ signalFlowEl.innerHTML = '<div class="empty-state">No signal-flow data.</div>'; return; }}
+      const active = flow.files.filter(f => f.declarations.length || f.signal_emit_count || f.signal_connection_count || f.unresolved_signal_reference_count)
+        .sort((a,b) => ((b.signal_emit_count+b.signal_connection_count+b.declarations.length) - (a.signal_emit_count+a.signal_connection_count+a.declarations.length)) || a.file.localeCompare(b.file));
+      const unresolved = flow.unresolved_references || [];
+      signalFlowEl.innerHTML = active.length ? active.map(f => `<div class="fn-item"><div class="fn-body"><div class="fn-name">${{f.file}}</div><div class="fn-file">${{f.declarations.length}} declarations · ${{f.signal_emit_count}} emits · ${{f.signal_connection_count}} connections</div>${{f.declarations.length ? `<div class="node-path">${{f.declarations.join(', ')}}</div>` : ''}}</div>${{f.unresolved_signal_reference_count ? `<span class="fn-score fn-score-mid">${{f.unresolved_signal_reference_count}} unresolved external reference</span>` : ''}}</div>`).join('') : '<div class="empty-state">No signal activity.</div>';
+      if (unresolved.length) signalFlowEl.innerHTML += unresolved.slice(0, 10).map(r => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">unresolved external reference: ${{r.receiver || 'local'}}.${{r.signal || 'signal'}}</div><div class="finding-file">${{r.file}}:${{r.line}} · ${{r.operation}}</div></div></div>`).join('');
     }}
 
     // ── render: policy findings ────────────────────────────────────
@@ -1842,6 +1922,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       const description = graphTypeDescriptions[graphTypeEl.value];
       graphTypeEl.title = description;
       graphViewHelpEl.dataset.tooltip = description;
+      if (tooltipTrigger === graphViewHelpEl) showTooltip(graphViewHelpEl);
     }}
     updateGraphViewHelp();
     graphTypeEl.addEventListener('change', () => {{ updateGraphViewHelp(); activateGraph(graphTypeEl.value); }});
@@ -1890,6 +1971,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     renderPolicyFindings();
     renderHotFunctions();
     renderInsights();
+    renderSignalFlow();
     applyZoom();
     activateGraph(graphType);
   </script>
@@ -1900,7 +1982,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_export, render_emerge_json};
+    use super::{build_export, render_emerge_json, render_html};
     use crate::model::{
         DependencyEdge, DependencyKind, EntityMetric, EntityNode, EntityScanReport, FileMetric,
         GraphAggregateMetrics, GraphCommunity, GraphReport, MetricsReport, OutputMetadata,
@@ -2050,6 +2132,9 @@ mod tests {
                     function_count: 2,
                     number_of_methods: 2,
                     signal_count: 0,
+                    signal_emit_count: 0,
+                    signal_connection_count: 0,
+                    unresolved_signal_reference_count: 0,
                     public_function_count: 1,
                     outgoing_dependency_count: 1,
                     incoming_dependency_count: 1,
@@ -2065,6 +2150,9 @@ mod tests {
                     function_count: 1,
                     number_of_methods: 1,
                     signal_count: 1,
+                    signal_emit_count: 0,
+                    signal_connection_count: 0,
+                    unresolved_signal_reference_count: 0,
                     public_function_count: 1,
                     outgoing_dependency_count: 1,
                     incoming_dependency_count: 1,
@@ -2080,6 +2168,9 @@ mod tests {
                     function_count: 1,
                     number_of_methods: 1,
                     signal_count: 0,
+                    signal_emit_count: 0,
+                    signal_connection_count: 0,
+                    unresolved_signal_reference_count: 0,
                     public_function_count: 1,
                     outgoing_dependency_count: 0,
                     incoming_dependency_count: 0,
@@ -2097,6 +2188,10 @@ mod tests {
                     file: "a.gd".to_string(),
                     line_count: 20,
                     method_count: 2,
+                    signal_count: 0,
+                    signal_emit_count: 0,
+                    signal_connection_count: 0,
+                    unresolved_signal_reference_count: 0,
                     ws_complexity: 8,
                     tfidf: 0.7,
                     incoming_dependency_count: 0,
@@ -2110,6 +2205,10 @@ mod tests {
                     file: "b.gd".to_string(),
                     line_count: 15,
                     method_count: 1,
+                    signal_count: 1,
+                    signal_emit_count: 0,
+                    signal_connection_count: 0,
+                    unresolved_signal_reference_count: 0,
                     ws_complexity: 4,
                     tfidf: 0.6,
                     incoming_dependency_count: 1,
@@ -2119,6 +2218,7 @@ mod tests {
                     louvain_modularity: 0,
                 },
             ],
+            signal_flow: crate::model::SignalFlowReport { available: true, files: Vec::new(), unresolved_references: Vec::new() },
             duplication: crate::model::DuplicationReport {
                 available: true,
                 unavailable_reason: None,
@@ -2148,5 +2248,10 @@ mod tests {
         assert!(json.contains("\"cluster_metrics_map\""));
         assert!(json.contains("\"policy_summary\""));
         assert!(json.contains("\"top_functions\""));
+        assert!(json.contains("\"signal_flow\""));
+        let html = render_html(&json, "fixture");
+        assert!(html.contains("id=\"gdhealth-tooltip\""));
+        assert!(html.contains("Signal activity"));
+        assert!(html.contains("unresolved external reference"));
     }
 }

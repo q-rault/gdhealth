@@ -70,6 +70,7 @@ Produced by `gdhealth metrics --format json` and `gdhealth health` (bundle).
   files: FileMetric[]
   functions: FunctionMetric[]
   entities: EntityMetric[]
+  signal_flow: SignalFlowReport
   duplication: DuplicationReport   // experimental, see below
 }
 ```
@@ -99,6 +100,9 @@ Produced by `gdhealth metrics --format json` and `gdhealth health` (bundle).
 | `function_count` | number | Total functions/methods |
 | `number_of_methods` | number | Alias for function_count (method context) |
 | `signal_count` | number | Number of `signal` declarations |
+| `signal_emit_count` | number | File-local emits resolved to a declared signal |
+| `signal_connection_count` | number | File-local connections resolved to a declared signal |
+| `unresolved_signal_reference_count` | number | Signal interactions whose ownership cannot be proven in this file |
 | `public_function_count` | number | Functions without leading `_` |
 | `outgoing_dependency_count` | number | Fan-out: files this file depends on |
 | `incoming_dependency_count` | number | Fan-in: files that depend on this file |
@@ -107,6 +111,8 @@ Produced by `gdhealth metrics --format json` and `gdhealth health` (bundle).
 | `tfidf` | number | TF-IDF score (vocabulary uniqueness) |
 | `louvain_modularity` | number | Community cluster ID (Louvain algorithm) |
 | `file_hotspot_score` | number | Composite hotspot ranking score |
+
+**`SignalFlowReport`** is contextual data only and does not affect hotspot scores or policy findings. It contains `available`, path-sorted `files`, and path/line/operation-sorted `unresolved_references`. Each file entry provides its `declarations` plus emit, connection, and unresolved counts. An unresolved reference includes `file`, `line`, `operation` (`emit` or `connect`), and optional `signal` and `receiver` text.
 
 **`FunctionMetric`**
 
@@ -195,6 +201,10 @@ Produced by `gdhealth health`. The primary integration surface for gdsuite and a
 | `file_count` | number | Total files discovered |
 | `edge_count` | number | Total dependency edges |
 | `policy_finding_count` | number | Total findings (all severities) |
+| `signal_declaration_count` | number | Total local signal declarations |
+| `signal_emit_count` | number | Total resolved local signal emits |
+| `signal_connection_count` | number | Total resolved local signal connections |
+| `unresolved_signal_reference_count` | number | Total unresolved signal interactions |
 
 **`GitFileStats`** (experimental — see [Stability guarantees](#stability-guarantees))
 

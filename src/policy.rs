@@ -432,6 +432,9 @@ mod tests {
                 function_count: 1,
                 number_of_methods: 1,
                 signal_count: 0,
+                signal_emit_count: 0,
+                signal_connection_count: 0,
+                unresolved_signal_reference_count: 0,
                 public_function_count: 1,
                 outgoing_dependency_count: 1,
                 incoming_dependency_count: 0,
@@ -454,6 +457,7 @@ mod tests {
                 hotspot_score: 99,
             }],
             entities: Vec::new(),
+            signal_flow: crate::model::SignalFlowReport { available: true, files: Vec::new(), unresolved_references: Vec::new() },
             duplication: crate::model::DuplicationReport {
                 available: true,
                 unavailable_reason: None,

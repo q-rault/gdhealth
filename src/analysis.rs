@@ -223,6 +223,10 @@ pub fn build_entity_metrics(
                 file: entity.file.clone(),
                 line_count: entity.line_count,
                 method_count: entity.method_count,
+                signal_count: file_metric.signal_count,
+                signal_emit_count: file_metric.signal_emit_count,
+                signal_connection_count: file_metric.signal_connection_count,
+                unresolved_signal_reference_count: file_metric.unresolved_signal_reference_count,
                 ws_complexity: file_metric.ws_complexity,
                 tfidf: file_metric.tfidf,
                 incoming_dependency_count: dependency_incoming

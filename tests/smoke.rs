@@ -501,6 +501,60 @@ script = ExtResource("1")
     fs::remove_dir_all(&fixture_root).ok();
 }
 
+#[test]
+fn signal_flow_is_additive_and_does_not_change_graph_or_policy_behavior() {
+    let fixture_root = unique_temp_dir("gdhealth-signal-flow");
+    write_repo(
+        &fixture_root,
+        &bundle_config("warning", "[]"),
+        &[
+            ("player.gd", r#"extends RefCounted
+signal health_changed(current: int)
+func _ready():
+    emit_signal("health_changed", 1)
+    health_changed.emit(2)
+    connect("health_changed", _on_health_changed)
+    health_changed.connect(_on_health_changed)
+    other.health_changed.emit(3)
+    other.connect("health_changed", _on_health_changed)
+    print("health_changed.emit()") # connect("health_changed")
+func _on_health_changed(_current: int):
+    pass
+"#),
+            ("other.gd", "extends RefCounted\n"),
+        ],
+    );
+
+    let metrics = run_and_read(&fixture_root, &["metrics", "--root", ".", "--format", "json", "--output", "metrics.json"], "metrics.json");
+    let metrics: Value = serde_json::from_str(&metrics).expect("parse metrics");
+    let player = metrics["files"].as_array().unwrap().iter().find(|file| file["file"] == "player.gd").unwrap();
+    assert_eq!(player["signal_count"].as_u64(), Some(1));
+    assert_eq!(player["signal_emit_count"].as_u64(), Some(2));
+    assert_eq!(player["signal_connection_count"].as_u64(), Some(2));
+    assert_eq!(player["unresolved_signal_reference_count"].as_u64(), Some(2));
+    assert_eq!(metrics["signal_flow"]["files"][0]["file"], "other.gd");
+    assert_eq!(metrics["signal_flow"]["unresolved_references"].as_array().unwrap().len(), 2);
+    let player_entity = metrics["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entity| entity["file"] == "player.gd")
+        .unwrap();
+    assert_eq!(player_entity["signal_emit_count"].as_u64(), Some(2));
+
+    let graph = run_and_read(&fixture_root, &["graph", "--root", ".", "--format", "json", "--output", "graph.json"], "graph.json");
+    let graph: Value = serde_json::from_str(&graph).expect("parse graph");
+    assert_eq!(graph["edges"].as_array().unwrap().len(), 0);
+    let health_output = run_gdhealth(&fixture_root, &["health", "--root", "."]);
+    assert_success(&health_output);
+    let health: Value = serde_json::from_str(&fs::read_to_string(fixture_root.join("reports/code-health/health.json")).unwrap()).unwrap();
+    assert_eq!(health["summary"]["signal_declaration_count"].as_u64(), Some(1));
+    assert_eq!(health["summary"]["signal_emit_count"].as_u64(), Some(2));
+    assert!(fs::read_to_string(fixture_root.join("reports/code-health/summary.txt")).unwrap().contains("signal declarations: 1"));
+    assert_success(&run_gdhealth(&fixture_root, &["policy", "--root", ".", "--fail-on", "critical"]));
+    fs::remove_dir_all(&fixture_root).ok();
+}
+
 // ── config validation test ───────────────────────────────────────────────────
 
 #[test]

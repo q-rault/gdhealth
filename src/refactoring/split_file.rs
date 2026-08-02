@@ -202,6 +202,9 @@ mod tests {
                 function_count: 0,
                 number_of_methods: 0,
                 signal_count: 0,
+                signal_emit_count: 0,
+                signal_connection_count: 0,
+                unresolved_signal_reference_count: 0,
                 public_function_count: 0,
                 outgoing_dependency_count: 0,
                 incoming_dependency_count: 0,
@@ -213,6 +216,7 @@ mod tests {
             }],
             functions: vec![],
             entities: vec![],
+            signal_flow: crate::model::SignalFlowReport { available: true, files: vec![], unresolved_references: vec![] },
             duplication: crate::model::DuplicationReport {
                 available: true,
                 unavailable_reason: None,
