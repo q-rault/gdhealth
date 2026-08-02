@@ -1301,6 +1301,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       html, body {{ height: auto; overflow: auto; }}
       .canvas-panel {{ height: 60vh; }}
       .panel-body {{ max-height: none; overflow: visible; }}
+      .has-tooltip::after {{ left: 0; bottom: auto; top: calc(100% + 8px); }}
     }}
   </style>
 </head>
@@ -1314,6 +1315,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       <div class="panel-body">
         <div class="section">
           <select id="graph-type" class="select"></select>
+          <span id="graph-view-help" class="has-tooltip" tabindex="0" data-tooltip="">ⓘ About this view</span>
           <input id="search" class="search" type="search" placeholder="Search files or groups…">
         </div>
         <div class="section">
@@ -1328,15 +1330,16 @@ fn render_html(data_json: &str, project_name: &str) -> String {
             <button class="seg" id="mode-hotspot">Hotspot</button>
           </div>
         </div>
-        <div class="section" style="flex:1;min-height:0;">
+        <div class="section">
           <div class="section-label">Clusters</div>
-          <div id="clusters" class="cluster-list" style="overflow-y:auto;flex:1;min-height:0;"></div>
+          <div id="clusters" class="cluster-list" style="height:260px;overflow-y:auto;"></div>
         </div>
       </div>
     </aside>
 
     <main class="panel canvas-panel">
       <svg id="graph" viewBox="0 0 960 720" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="canvas-overlay bottom-right" style="display:flex;gap:4px;align-items:center;bottom:auto;top:12px;"><button class="seg" id="zoom-out" title="Zoom out">−</button><button class="seg" id="zoom-reset" title="Reset zoom">100%</button><button class="seg" id="zoom-in" title="Zoom in">+</button></div>
       <div class="canvas-overlay bottom-left">Drag · Click to select · Esc to clear</div>
       <div class="canvas-overlay bottom-right hidden" id="hotspot-legend">
         <div class="heatbar"></div>
@@ -1404,12 +1407,14 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     let colorMode = 'community';
     let maxHotspot = 1;
     let searchTerm = '';
+    let zoom = 1;
 
     const selEl = document.getElementById('selection');
     const clustersEl = document.getElementById('clusters');
     const statsEl = document.getElementById('stats');
     const badgesEl = document.getElementById('health-badges');
     const graphTypeEl = document.getElementById('graph-type');
+    const graphViewHelpEl = document.getElementById('graph-view-help');
     const searchEl = document.getElementById('search');
     const policyEl = document.getElementById('policy-findings');
     const hotFnEl = document.getElementById('hot-functions');
@@ -1422,6 +1427,12 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     const linkLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const nodeLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     svg.append(linkLayer, nodeLayer);
+
+    function applyZoom() {{
+      const width = W / zoom, height = H / zoom;
+      svg.setAttribute('viewBox', `${{(W-width)/2}} ${{(H-height)/2}} ${{width}} ${{height}}`);
+      document.getElementById('zoom-reset').textContent = `${{Math.round(zoom * 100)}}%`;
+    }}
 
     // ── color helpers ──────────────────────────────────────────────
     function communityColor(id) {{
@@ -1591,7 +1602,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         return;
       }}
       gitInsightsEl.innerHTML = i.git_available
-        ? [`<div class="fn-item"><span class="fn-name">Bus factor</span><span class="fn-score fn-score-mid">${{i.repo_bus_factor}}</span></div>`,
+        ? [`<div class="fn-item"><span class="fn-name has-tooltip" data-tooltip="Bus factor is the smallest number of contributors responsible for 80% of non-merge commits. A value of 2 means two people account for most of the repository's history; losing either would concentrate knowledge risk.">Bus factor</span><span class="fn-score fn-score-mid">${{i.repo_bus_factor}}</span></div>`,
+           `<div class="node-path">Churn score = Σ exp(−ln(2) × age days / configured half-life) × min((lines added + deleted)/100, 3). Files are highlighted when they are in the top churn quartile and changed in at least 3 commits in 90 days.</div>`,
            ...i.top_churn_files.map(f => `<div class="fn-item"><span class="fn-name" title="${{f.file}}">${{f.file}}</span><span class="fn-score fn-score-high">${{f.temporal_hotspot_score.toFixed(1)}}</span></div>`)]
             .join('')
         : '<div class="empty-state">Git signals unavailable.</div>';
@@ -1775,8 +1787,12 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     svg.addEventListener('mousemove', e => {{
       if (!draggingNode) return;
       const rect = svg.getBoundingClientRect();
-      draggingNode.x = ((e.clientX-rect.left)/rect.width)*W;
-      draggingNode.y = ((e.clientY-rect.top)/rect.height)*H;
+      const viewBox = svg.viewBox.baseVal;
+      const scale = Math.min(rect.width / viewBox.width, rect.height / viewBox.height);
+      const offsetX = (rect.width - viewBox.width * scale) / 2;
+      const offsetY = (rect.height - viewBox.height * scale) / 2;
+      draggingNode.x = viewBox.x + (e.clientX - rect.left - offsetX) / scale;
+      draggingNode.y = viewBox.y + (e.clientY - rect.top - offsetY) / scale;
       draggingNode.vx=0; draggingNode.vy=0;
       draw();
     }});
@@ -1787,6 +1803,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       }}
     }});
     window.addEventListener('mouseup', () => {{ draggingNode=null; }});
+    document.getElementById('zoom-in').addEventListener('click', () => {{ zoom = Math.min(3, zoom * 1.25); applyZoom(); }});
+    document.getElementById('zoom-out').addEventListener('click', () => {{ zoom = Math.max(0.5, zoom / 1.25); applyZoom(); }});
+    document.getElementById('zoom-reset').addEventListener('click', () => {{ zoom = 1; applyZoom(); }});
     document.addEventListener('keydown', e => {{
       if (e.key==='Escape') {{
         activeNodeId=null; activeCluster=null;
@@ -1804,8 +1823,13 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     graphTypeEl.innerHTML = payload.analysis_config.graph_types.map(t =>
       `<option value="${{t}}"${{t===payload.analysis_config.default_graph_type?' selected':''}}>${{graphTypeLabels[t]||t}}</option>`
     ).join('');
-      graphTypeEl.title = graphTypeDescriptions[graphTypeEl.value];
-      graphTypeEl.addEventListener('change', () => {{ graphTypeEl.title = graphTypeDescriptions[graphTypeEl.value]; activateGraph(graphTypeEl.value); }});
+    function updateGraphViewHelp() {{
+      const description = graphTypeDescriptions[graphTypeEl.value];
+      graphTypeEl.title = description;
+      graphViewHelpEl.dataset.tooltip = description;
+    }}
+    updateGraphViewHelp();
+    graphTypeEl.addEventListener('change', () => {{ updateGraphViewHelp(); activateGraph(graphTypeEl.value); }});
 
     // ── color mode ─────────────────────────────────────────────────
     document.getElementById('mode-community').addEventListener('click', () => {{
@@ -1851,6 +1875,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     renderPolicyFindings();
     renderHotFunctions();
     renderInsights();
+    applyZoom();
     activateGraph(graphType);
   </script>
 </body>
