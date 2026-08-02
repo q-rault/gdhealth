@@ -1162,6 +1162,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       min-height: 0;
     }}
     .section {{ display: flex; flex-direction: column; gap: 7px; }}
+    .app > aside:last-child .section {{ max-height: 230px; min-height: 0; overflow-y: auto; padding-right: 3px; }}
+    .app > aside:last-child #selection-section {{ max-height: 380px; flex: none; }}
     .section-label {{
       font-size: 10.5px;
       font-weight: 500;
@@ -1502,6 +1504,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     .relation-filter {{ display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:4px 7px; border:1px solid var(--border-2); border-radius:999px; background:transparent; color:var(--text-2); cursor:pointer; }}
     .relation-filter.active {{ background:var(--blue-bg); border-color:var(--blue); color:var(--blue); }}
     .relation-line {{ width:18px; height:6px; flex:none; overflow:visible; }}
+    #graph {{ user-select:none; -webkit-user-select:none; touch-action:none; }}
     .details {{ margin-top:9px; border-top:1px solid var(--border); padding-top:6px; }}
     .details summary {{ cursor:pointer; color:var(--text-2); font-size:11px; font-weight:600; }}
     .details-body {{ margin:6px 0 2px; color:var(--text-3); font-size:10.5px; line-height:1.5; }}
@@ -1525,7 +1528,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       </div>
       <div class="panel-body">
         <div class="section">
-          <div class="section-label"><span class="has-tooltip" data-tooltip="One file-centric architecture graph. Toggle relationship categories without changing graph views.">Architecture relations</span></div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Ways one GDScript file statically knows about another: inheritance, preload, load(), or a named class. These do not prove scene wiring or other dynamic runtime behavior.">Script references</span></div>
           <div id="relation-filters" class="relation-filters"></div>
           <input id="search" class="search" type="search" placeholder="Search files or groups…">
         </div>
@@ -1535,14 +1538,14 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <div id="health-badges" class="badge-row"></div>
         </div>
         <div class="section">
-          <div class="section-label">Color</div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Community groups scripts that are strongly connected in this graph; it is an advanced graph aid, not a Godot node group, scene, folder, or finding. Change priority highlights scripts where a change may cost the most.">Color</span></div>
           <div class="seg-control">
-            <button class="seg active" id="mode-community">Community</button>
-            <button class="seg" id="mode-hotspot">Hotspot</button>
+            <button class="seg active" id="mode-community" title="Advanced: graph-detected groups of related scripts, not Godot node groups.">Community</button>
+            <button class="seg" id="mode-hotspot" title="Highlights scripts where complexity and coupling make changes more costly.">Change priority</button>
           </div>
         </div>
         <div class="section">
-          <div class="section-label">Clusters</div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Advanced graph groups containing two or more scripts. Single-script groups are hidden because they do not help navigation.">Clusters</span></div>
           <div id="clusters" class="cluster-list" style="height:260px;overflow-y:auto;"></div>
         </div>
       </div>
@@ -1551,7 +1554,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     <main class="panel canvas-panel">
       <svg id="graph" viewBox="0 0 960 720" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="canvas-overlay bottom-right" style="display:flex;gap:4px;align-items:center;bottom:auto;top:12px;"><button class="seg" id="zoom-out" title="Zoom out">−</button><button class="seg" id="zoom-reset" title="Reset zoom">100%</button><button class="seg" id="zoom-in" title="Zoom in">+</button></div>
-      <div class="canvas-overlay bottom-left">Drag · Click to select · Esc to clear</div>
+      <div class="canvas-overlay bottom-left">Click scripts to select them · Drag empty space to select an area · Esc clears selection</div>
       <div class="canvas-overlay bottom-right hidden" id="hotspot-legend">
         <div class="heatbar"></div>
         <div class="heatbar-labels"><span>Low</span><span>High</span></div>
@@ -1566,38 +1569,38 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         </div>
         <div class="divider"></div>
         <div class="section">
-          <div class="section-label">Signal flow</div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Signals are Godot event messages. A declaration defines an event, an emit broadcasts it, and a connection tells Godot which callback should react.">Signal flow</span></div>
           <div id="signal-flow" class="scroll-list"></div>
         </div>
         <div class="divider"></div>
         <div class="section">
-          <div class="section-label"><span class="has-tooltip" data-tooltip="Godot engine contracts found statically. They are shown as inventory until gdhealth can prove a concrete file-to-file runtime target.">Godot architecture</span></div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Inventory only, not findings: Autoloads are global services; InputMap contains named inputs; groups are named node collections; RPC is networking; exports appear in the editor; node bindings find scene nodes; lifecycle callbacks are methods such as _ready().">Godot architecture</span></div>
           <div id="godot-insights" class="fn-list"></div>
         </div>
         <div class="divider"></div>
         <div class="section" style="flex:1;min-height:0;min-height:140px;">
           <div class="section-label">
-            <span class="has-tooltip" data-tooltip="Rules that exceed configured architecture or complexity thresholds. Critical findings need immediate attention; warnings should be reviewed.">Policy findings</span>
+            <span class="has-tooltip" data-tooltip="Rules configured by your team, not Godot compiler errors. Critical means the configured critical threshold was exceeded; warning means review it soon.">Policy findings</span>
             <span class="section-aside" id="policy-count-aside"></span>
           </div>
           <div id="policy-findings" class="finding-list" style="overflow-y:auto;flex:1;"></div>
         </div>
         <div class="divider"></div>
         <div class="section">
-          <div class="section-label"><span class="has-tooltip" data-tooltip="Functions with the highest structural hotspot score: a combination of size, complexity, and dependency coupling.">Hot functions</span></div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Functions most likely to be hard to change because they are long, branch-heavy, deeply nested, or parameter-heavy. This is a ranking aid, not proof of a bug.">Hot functions</span></div>
           <div id="hot-functions" class="fn-list"></div>
         </div>
         <div class="divider"></div>
         <div class="section">
-          <div class="section-label"><span class="has-tooltip" data-tooltip="History-derived signals: recent change frequency, ownership concentration, defect-shaped commits, and co-change patterns.">Git signals</span></div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Optional repository-history context: which scripts change often and whether knowledge is concentrated in a few contributors. It is not a performance or quality score.">Git signals</span></div>
           <div id="git-insights" class="fn-list"></div>
         </div>
         <div class="section">
-          <div class="section-label"><span class="has-tooltip" data-tooltip="Similar normalized code blocks. Variable names are ignored so copy-paste variants remain visible.">Duplicate code</span></div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Similar code after gdhealth ignores variable names and formatting. Review matches before changing code; similar code can be intentional.">Duplicate code</span></div>
           <div id="duplicate-insights" class="fn-list"></div>
         </div>
         <div class="section">
-          <div class="section-label"><span class="has-tooltip" data-tooltip="Concrete, conservative suggestions generated from cycles and cohesive clusters inside large files.">Refactoring suggestions</span></div>
+          <div class="section-label"><span class="has-tooltip" data-tooltip="Conservative heuristic suggestions based on cycles and code structure. Review them before applying any change.">Refactoring suggestions</span></div>
           <div id="refactor-insights" class="fn-list"></div>
         </div>
       </div>
@@ -1614,7 +1617,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     const W = 960, H = 720;
     let graphPayload = null;
     let nodes = [], nodeMap = new Map(), links = [], clusters = [], stats = null;
-    let activeCluster = null, activeNodeId = null, draggingNode = null;
+    let activeCluster = null, activeNodeId = null, selectedNodeIds = new Set();
+    let marqueeStart = null, marqueeMoved = false, marqueeJustFinished = false;
     let colorMode = 'community';
     let maxHotspot = 1;
     let searchTerm = '';
@@ -1638,8 +1642,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     const hotspotLegend = document.getElementById('hotspot-legend');
     const svg = document.getElementById('graph');
     const linkLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const selectionLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const nodeLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    svg.append(linkLayer, nodeLayer);
+    svg.append(linkLayer, selectionLayer, nodeLayer);
 
     function applyZoom() {{
       const width = W / zoom, height = H / zoom;
@@ -1735,7 +1740,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         const style = relationStyle(kind);
         const visible = visibleLinks().filter(link => link.kind === kind);
         const pairs = new Set(visible.map(link => `${{link.source}}→${{link.target}}`)).size;
-        return `<button class="relation-filter${{activeKinds.has(kind) ? ' active' : ''}}" data-kind="${{kind}}" aria-label="${{style.label}}: ${{pairs}} visible file pairs and ${{visible.length}} relationship occurrences. ${{style.accessible_description}}" title="${{style.explanation}} ${{style.accessible_description}}"><svg class="relation-line" viewBox="0 0 18 6" aria-hidden="true"><line x1="0" y1="3" x2="18" y2="3" stroke="${{style.color}}" stroke-width="2" stroke-dasharray="${{style.dash_pattern}}"/></svg>${{style.label}} <span>${{pairs}}/${{visible.length}}</span></button>`;
+        return `<button class="relation-filter${{activeKinds.has(kind) ? ' active' : ''}}" data-kind="${{kind}}" aria-label="${{style.label}}: ${{pairs}} script-to-script connections and ${{visible.length}} references found. ${{style.accessible_description}}" title="${{style.explanation}} ${{pairs}} connections / ${{visible.length}} references found. The first number counts script-to-script connections; the second counts every matching use in code. ${{style.accessible_description}}"><svg class="relation-line" viewBox="0 0 18 6" aria-hidden="true"><line x1="0" y1="3" x2="18" y2="3" stroke="${{style.color}}" stroke-width="2" stroke-dasharray="${{style.dash_pattern}}"/></svg>${{style.label}} <span>${{pairs}}/${{visible.length}}</span></button>`;
       }}).join('');
       relationFiltersEl.querySelectorAll('[data-kind]').forEach(button => button.addEventListener('click', () => {{
         const kind = button.dataset.kind;
@@ -1746,11 +1751,10 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     function renderStats() {{
       const ps = payload.policy_summary;
       statsEl.innerHTML = [
-        ['Files', stats.node_count, 'Source files analyzed in this graph.'],
         ['Files', stats.node_count, 'Analyzed source files in this report.'],
-        ['Code size', stats.total_sloc.toLocaleString() + ' SLOC', 'Approximate source lines of code to maintain.'],
-        ['Dependencies', `${{new Set(visibleLinks().map(l => `${{l.source}}→${{l.target}}`)).size}} connected pairs · ${{visibleLinks().length}} declared relationships`, 'Connected file pairs are unique source-to-target pairs after filters. Declared relationships are individual static occurrences; declarations alone are not relationships.'],
-        ['Attention', (ps.critical_count + ps.warning_count + ps.cycle_count) ? `${{ps.critical_count}} critical · ${{ps.warning_count}} warnings · ${{ps.cycle_count}} cycles` : 'No findings', 'Concrete findings and dependency cycles that merit review.'],
+        ['Lines of code', stats.total_sloc.toLocaleString(), 'Approximate source lines of code to maintain.'],
+        ['Script references', `${{visibleLinks().length}} references between ${{new Set(visibleLinks().map(l => `${{l.source}}→${{l.target}}`)).size}} scripts`, 'A script reference is a static use of another script: inheritance, preload, load(), or a named class. One script may refer to the same target in more than one way.'],
+        ['Policy findings', (ps.critical_count + ps.warning_count) ? `${{ps.critical_count}} critical · ${{ps.warning_count}} warnings` : 'No findings', 'Rules that exceed the project’s configured architecture or code-shape thresholds. Cycles remain listed as their own badge.'],
       ].map(([l,v,tip]) => `<div class="stat-card"><div class="stat-label has-tooltip" data-tooltip="${{tip}}">${{l}}</div><div class="stat-value">${{v}}</div></div>`).join('');
 
       badgesEl.innerHTML = [
@@ -1763,18 +1767,19 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
     // ── render: clusters ───────────────────────────────────────────
     function renderClusters() {{
-      clustersEl.innerHTML = clusters.map(c => `
+      const visibleClusters = clusters.filter(c => c.node_count > 1);
+      clustersEl.innerHTML = visibleClusters.length ? visibleClusters.map(c => `
         <button class="cluster-item${{activeCluster === c.community_id ? ' active' : ''}}" data-cid="${{c.community_id}}">
           <span class="cluster-dot" style="background:${{communityColor(c.community_id)}}"></span>
           <span class="cluster-name">${{c.label || 'Cluster ' + c.community_id}}</span>
           <span class="cluster-meta">${{c.node_count}} files</span>
         </button>
-      `).join('');
+      `).join('') : '<div class="empty-state">No multi-script graph groups.</div>';
       clustersEl.querySelectorAll('[data-cid]').forEach(btn => {{
         btn.addEventListener('click', () => {{
           const cid = Number(btn.dataset.cid);
           activeCluster = activeCluster === cid ? null : cid;
-          activeNodeId = null;
+          activeNodeId = null; selectedNodeIds.clear();
           renderClusters();
           updateSelection(null);
           draw();
@@ -1783,6 +1788,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     }}
 
     // ── render: selection ──────────────────────────────────────────
+    function selectedNodes() {{
+      return [...selectedNodeIds].map(id => nodeMap.get(id)).filter(Boolean);
+    }}
     function updateSelection(node) {{
       if (!node && activeCluster == null) {{
         selEl.className = 'empty-state';
@@ -1795,14 +1803,32 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         selEl.className = '';
         selEl.innerHTML = `
           <div class="node-name">${{c.label || 'Cluster ' + c.community_id}}</div>
-          <div class="node-path">${{c.node_count}} files · ${{c.total_sloc}} SLOC · ${{c.percent_total_sloc.toFixed(1)}}%</div>
+          <div class="node-path">${{c.node_count}} scripts · ${{c.total_sloc}} lines of code · ${{c.percent_total_sloc.toFixed(1)}}%</div>
           <div class="metric-grid">
-            <div class="metric-card" title="Average fan-in"><div class="metric-label">Avg fan-in</div><div class="metric-value">${{fmt(c.avg_fan_in)}}</div></div>
-            <div class="metric-card" title="Average fan-out"><div class="metric-label">Avg fan-out</div><div class="metric-value">${{fmt(c.avg_fan_out)}}</div></div>
-            <div class="metric-card" title="Average functions per file"><div class="metric-label">Avg funcs</div><div class="metric-value">${{fmt(c.avg_function_count)}}</div></div>
-            <div class="metric-card"><div class="metric-label">Files</div><div class="metric-value">${{c.node_count}}</div></div>
+            <div class="metric-card" title="Average number of scripts that use a script in this graph group."><div class="metric-label">Avg used by</div><div class="metric-value">${{fmt(c.avg_fan_in)}}</div></div>
+            <div class="metric-card" title="Average number of scripts each script in this graph group uses."><div class="metric-label">Avg uses</div><div class="metric-value">${{fmt(c.avg_fan_out)}}</div></div>
+            <div class="metric-card" title="Average number of functions per GDScript file in this graph group."><div class="metric-label">Avg functions / script</div><div class="metric-value">${{fmt(c.avg_function_count)}}</div></div>
+            <div class="metric-card"><div class="metric-label">Scripts</div><div class="metric-value">${{c.node_count}}</div></div>
           </div>
         `;
+        return;
+      }}
+      const selected = selectedNodes();
+      if (selected.length > 1) {{
+        const selectedIds = new Set(selected.map(n => n.id));
+        const incoming = new Set(links.filter(l => selectedIds.has(l.target) && !selectedIds.has(l.source)).map(l => l.source));
+        const outgoing = new Set(links.filter(l => selectedIds.has(l.source) && !selectedIds.has(l.target)).map(l => l.target));
+        const totalLines = selected.reduce((sum,n) => sum + n.line_count, 0);
+        const totalFunctions = selected.reduce((sum,n) => sum + n.function_count, 0);
+        const controlFlow = selected.reduce((sum,n) => sum + n.ws_complexity, 0);
+        const highestPriority = Math.max(...selected.map(n => n.metric_file_hotspot_score));
+        const cycles = selected.filter(n => n.has_cycle).length;
+        const warnings = selected.reduce((sum,n) => sum + n.parser_warning_count, 0);
+        const unresolved = selected.reduce((sum,n) => sum + n.unresolved_signal_reference_count, 0);
+        const policyCount = (payload.top_policy_findings || []).filter(f => selected.some(n => n.absolute_name === f.file)).length;
+        const review = [policyCount ? `${{policyCount}} policy findings` : '', cycles ? `${{cycles}} cycles` : '', warnings ? `${{warnings}} parser warnings` : '', unresolved ? `${{unresolved}} unresolved` : ''].filter(Boolean).join(' · ') || 'No findings';
+        selEl.className = '';
+        selEl.innerHTML = `<div class="node-name">${{selected.length}} scripts selected</div><div class="node-path">Aggregated values; change priority shows the highest selected script.</div><div class="metric-grid"><div class="metric-card"><div class="metric-label">Size</div><div class="metric-value">${{totalLines}} lines · ${{totalFunctions}} functions</div></div><div class="metric-card"><div class="metric-label">Script connections</div><div class="metric-value">Used by ${{incoming.size}} scripts · Uses ${{outgoing.size}} scripts</div></div><div class="metric-card"><div class="metric-label">Control-flow load</div><div class="metric-value">${{controlFlow}}</div></div><div class="metric-card" title="Highest change-priority score among the selected scripts."><div class="metric-label">Highest change priority</div><div class="metric-value" style="color:${{hotspotColor(highestPriority)}}">${{highestPriority}}</div></div><div class="metric-card"><div class="metric-label">Policy findings & warnings</div><div class="metric-value">${{review}}</div></div></div>`;
         return;
       }}
       if (!node) return;
@@ -1830,10 +1856,10 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         <div class="node-path">${{node.absolute_name}}</div>
         <div class="metric-grid">
           <div class="metric-card" title="Larger files have more code to understand and modify."><div class="metric-label">Size</div><div class="metric-value">${{node.line_count}} lines · ${{node.function_count}} functions</div></div>
-          <div class="metric-card" title="Shows change impact and dependency surface."><div class="metric-label">Coupling</div><div class="metric-value">${{node.metric_fan_in_dependency_graph}} depend on it · ${{node.metric_fan_out_dependency_graph}} it depends on</div></div>
+          <div class="metric-card" title="How many other scripts statically use this script, and how many scripts it statically uses."><div class="metric-label">Script connections</div><div class="metric-value">Used by ${{node.metric_fan_in_dependency_graph}} scripts · Uses ${{node.metric_fan_out_dependency_graph}} scripts</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="Aggregates branching and nesting across this file's functions. Higher values mean more paths to reason about and test.">Control-flow load</div><div class="metric-value">${{node.ws_complexity}}</div></div>
           <div class="metric-card"><div class="metric-label has-tooltip" data-tooltip="A relative ranking aid combining difficult code with coupling; it is not a defect prediction.">Change priority</div><div class="metric-value" style="color:${{hotspotColor(node.metric_file_hotspot_score)}}">${{node.metric_file_hotspot_score}} · ${{priorityBand}}</div></div>
-          <div class="metric-card" title="Cycles, policy/parser warnings, and unresolved runtime references need investigation."><div class="metric-label">Attention</div><div class="metric-value">${{attention}}</div></div>
+          <div class="metric-card" title="Policy findings, parser warnings, dependency cycles, or runtime references that need review. A cycle means a chain of script references eventually points back to this script; some self-load factory patterns are intentional."><div class="metric-label">Policy findings & warnings</div><div class="metric-value">${{attention}}</div></div>
         </div>
         <details class="details"><summary>Dependency details</summary><div class="details-body">${{dependencyGroups.length ? dependencyGroups.map(([label, names]) => `<div>${{label}}: ${{names.join(', ')}}</div>`).join('') : 'No resolved file dependencies under the active filters.'}}</div></details>
         ${{eventCount ? `<details class="details"><summary>Events & contracts</summary><div class="details-body">${{node.signal_count}} declarations · ${{node.signal_emit_count}} emits · ${{node.signal_connection_count}} connections · ${{node.unresolved_signal_reference_count}} unresolved targets${{node.signal_declarations.length ? `<br>Signals: ${{node.signal_declarations.join(', ')}}` : ''}}<br>Static resolution cannot prove dynamic runtime wiring.</div></details>` : ''}}
@@ -1846,14 +1872,17 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     function renderSignalFlow() {{
       const flow = payload.signal_flow;
       if (!flow || !flow.files) {{ signalFlowEl.innerHTML = '<div class="empty-state">No signal-flow data.</div>'; return; }}
-      const active = flow.files.filter(f => f.declarations.length || f.signal_emit_count || f.signal_connection_count || f.unresolved_signal_reference_count)
+      const selectedFiles = selectedNodes().map(n => n.absolute_name);
+      const active = flow.files.filter(f => (!selectedFiles.length || selectedFiles.includes(f.file)) && (f.declarations.length || f.signal_emit_count || f.signal_connection_count || f.unresolved_signal_reference_count))
         .sort((a,b) => ((b.signal_emit_count+b.signal_connection_count+b.declarations.length) - (a.signal_emit_count+a.signal_connection_count+a.declarations.length)) || a.file.localeCompare(b.file));
-      const unresolved = flow.unresolved_references || [];
-      signalFlowEl.innerHTML = active.length ? active.map(f => `<div class="fn-item"><div class="fn-body"><div class="fn-name">${{f.file}}</div><div class="fn-file">${{f.declarations.length}} declarations · ${{f.signal_emit_count}} emits · ${{f.signal_connection_count}} connections</div>${{f.declarations.length ? `<div class="node-path">${{f.declarations.join(', ')}}</div>` : ''}}</div>${{f.unresolved_signal_reference_count ? `<span class="fn-score fn-score-mid has-tooltip" data-tooltip="Unresolved targets are signal emits or connections whose receiving object, signal, or callback cannot be mapped to an analyzed file with high confidence. This commonly happens with local variables, scene wiring, autoloads, or dynamic runtime paths. It is a coverage diagnostic, not proof of a bug.">${{f.unresolved_signal_reference_count}} unresolved targets</span>` : ''}}</div>`).join('') : '<div class="empty-state">No signal activity.</div>';
+      const unresolved = (flow.unresolved_references || []).filter(r => !selectedFiles.length || selectedFiles.includes(r.file));
+      signalFlowEl.innerHTML = active.length ? active.map(f => `<div class="fn-item"><div class="fn-body"><div class="fn-name">${{f.file}}</div><div class="fn-file">${{f.declarations.length}} declarations · ${{f.signal_emit_count}} emits · ${{f.signal_connection_count}} connections</div>${{f.declarations.length ? `<div class="node-path">${{f.declarations.join(', ')}}</div>` : ''}}</div>${{f.unresolved_signal_reference_count ? `<span class="fn-score fn-score-mid has-tooltip" data-tooltip="Unresolved targets are signal emits or connections whose receiving object, signal, or callback cannot be mapped to an analyzed file with high confidence. This commonly happens with local variables, scene wiring, autoloads, or dynamic runtime paths. It is a coverage diagnostic, not proof of a bug.">${{f.unresolved_signal_reference_count}} unresolved targets</span>` : ''}}</div>`).join('') : `<div class="empty-state">${{selectedFiles.length ? 'No statically recognised signal contracts in the selected scripts.' : 'No signal activity.'}}</div>`;
       if (unresolved.length) signalFlowEl.innerHTML += unresolved.slice(0, 10).map(r => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">Unresolved signal target: ${{r.receiver || 'dynamic/local'}}.${{r.signal || 'signal'}}</div><div class="finding-file">${{r.file}}:${{r.line}} · ${{r.operation}} · receiver ownership cannot be proven statically</div></div></div>`).join('');
     }}
 
     function renderGodotInsights() {{
+      const selectedFiles = selectedNodes().map(n => n.absolute_name);
+      if (selectedFiles.length) {{ godotInsightsEl.innerHTML = '<div class="empty-state">Per-file Godot architecture inventory is not available in this report yet.</div>'; return; }}
       const g = payload.godot_insights || {{}};
       const rows = [
         ['Autoloads', (g.autoloads || []).length, (g.autoloads || []).join(', ') || 'None declared in project.godot'],
@@ -1870,16 +1899,18 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     // ── render: policy findings ────────────────────────────────────
     function renderPolicyFindings() {{
       const ps = payload.policy_summary;
+      const selectedFiles = selectedNodes().map(n => n.absolute_name);
       const parts = [];
       if (ps.critical_count) parts.push(`${{ps.critical_count}} critical`);
       if (ps.warning_count) parts.push(`${{ps.warning_count}} warning`);
       policyAside.textContent = parts.join(' · ');
 
-      if (!payload.top_policy_findings || payload.top_policy_findings.length === 0) {{
-        policyEl.innerHTML = '<div class="empty-state">No policy findings.</div>';
+      const findings = (payload.top_policy_findings || []).filter(f => !selectedFiles.length || selectedFiles.includes(f.file));
+      if (findings.length === 0) {{
+        policyEl.innerHTML = `<div class="empty-state">${{selectedFiles.length ? 'No policy findings for the selected scripts.' : 'No policy findings.'}}</div>`;
         return;
       }}
-      policyEl.innerHTML = payload.top_policy_findings.map(f => `
+      policyEl.innerHTML = findings.map(f => `
         <div class="finding-item">
           <div class="finding-dot ${{f.severity}}"></div>
           <div class="finding-body">
@@ -1892,16 +1923,18 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
     // ── render: hot functions ──────────────────────────────────────
     function renderHotFunctions() {{
-      if (!payload.top_functions || payload.top_functions.length === 0) {{
-        hotFnEl.innerHTML = '<div class="empty-state">No function data.</div>';
+      const selectedFiles = selectedNodes().map(n => n.absolute_name);
+      const functions = (payload.top_functions || []).filter(f => !selectedFiles.length || selectedFiles.includes(f.file));
+      if (functions.length === 0) {{
+        hotFnEl.innerHTML = `<div class="empty-state">${{selectedFiles.length ? 'No top functions for the selected scripts.' : 'No function data.'}}</div>`;
         return;
       }}
-      const maxScore = Math.max(...payload.top_functions.map(f => f.hotspot_score), 1);
-      hotFnEl.innerHTML = payload.top_functions.map(f => {{
+      const maxScore = Math.max(...functions.map(f => f.hotspot_score), 1);
+      hotFnEl.innerHTML = functions.map(f => {{
         const t = f.hotspot_score / maxScore;
         const cls = t > 0.65 ? 'fn-score-high' : t > 0.35 ? 'fn-score-mid' : 'fn-score-low';
         return `
-          <div class="fn-item" title="${{f.file}}:${{f.start_line}} · ${{f.line_count}} lines · cyclomatic ${{f.cyclomatic_estimate}}">
+          <div class="fn-item" title="${{f.file}}:${{f.start_line}} · ${{f.line_count}} lines · ${{f.cyclomatic_estimate}} decision paths (cyclomatic complexity counts branches such as if, match, and loops).">
             <div class="fn-body">
               <div class="fn-name">${{f.function_name}}</div>
               <div class="fn-file">${{f.file}}</div>
@@ -1914,6 +1947,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
 
     function renderInsights() {{
       const i = payload.insights;
+      const selectedFiles = selectedNodes().map(n => n.absolute_name);
       if (!i) {{
         gitInsightsEl.innerHTML = '<div class="empty-state">Available in the full health report.</div>';
         duplicateInsightsEl.innerHTML = '<div class="empty-state">Available in the full health report.</div>';
@@ -1922,16 +1956,25 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       }}
       gitInsightsEl.innerHTML = i.git_available
         ? [`<div class="fn-item"><span class="fn-name has-tooltip" data-tooltip="Bus factor is the smallest number of contributors responsible for 80% of non-merge commits. A value of 2 means two people account for most of the repository's history; losing either would concentrate knowledge risk.">Bus factor</span><span class="fn-score fn-score-mid">${{i.repo_bus_factor}}</span></div>`,
-           `<div class="node-path">Churn score = Σ exp(−ln(2) × age days / configured half-life) × min((lines added + deleted)/100, 3). Files are highlighted when they are in the top churn quartile and changed in at least 3 commits in 90 days.</div>`,
-           ...i.top_churn_files.map(f => `<div class="fn-item"><span class="fn-name" title="${{f.file}}">${{f.file}}</span><span class="fn-score fn-score-high">${{f.temporal_hotspot_score.toFixed(1)}}</span></div>`)]
+           `<div class="node-path">Recent, repeated changes raise this score. It helps identify scripts where an improvement may pay off; it does not measure code quality.</div>`,
+           ...i.top_churn_files.filter(f => !selectedFiles.length || selectedFiles.includes(f.file)).map(f => `<div class="fn-item"><span class="fn-name" title="${{f.file}}">${{f.file}}</span><span class="fn-score fn-score-high">${{f.temporal_hotspot_score.toFixed(1)}}</span></div>`)]
             .join('')
         : '<div class="empty-state">Git signals unavailable.</div>';
-      duplicateInsightsEl.innerHTML = i.duplicates.length
-        ? i.duplicates.map(d => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">${{d.file_a}}:${{d.start_line_a}} ↔ ${{d.file_b}}:${{d.start_line_b}}</div><div class="node-path">${{d.token_count}} normalized tokens</div></div></div>`).join('')
-        : '<div class="empty-state">No duplicates detected.</div>';
-      refactorInsightsEl.innerHTML = i.refactor_suggestions.length
+      const duplicates = i.duplicates.filter(d => !selectedFiles.length || selectedFiles.includes(d.file_a) || selectedFiles.includes(d.file_b));
+      duplicateInsightsEl.innerHTML = duplicates.length
+        ? duplicates.map(d => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">${{d.file_a}}:${{d.start_line_a}} ↔ ${{d.file_b}}:${{d.start_line_b}}</div><div class="node-path">${{d.token_count}} normalized tokens</div></div></div>`).join('')
+        : `<div class="empty-state">${{selectedFiles.length ? 'No duplicates detected for the selected scripts.' : 'No duplicates detected.'}}</div>`;
+      refactorInsightsEl.innerHTML = !selectedFiles.length && i.refactor_suggestions.length
         ? i.refactor_suggestions.map(s => `<div class="finding-item"><div class="finding-body"><div class="finding-msg">${{s}}</div></div></div>`).join('')
-        : '<div class="empty-state">No concrete suggestion.</div>';
+        : `<div class="empty-state">${{selectedFiles.length ? 'No selection-specific refactoring suggestion.' : 'No concrete suggestion.'}}</div>`;
+    }}
+
+    function renderRightPanels() {{
+      renderPolicyFindings();
+      renderHotFunctions();
+      renderInsights();
+      renderSignalFlow();
+      renderGodotInsights();
     }}
 
     // ── graph helpers ──────────────────────────────────────────────
@@ -2055,12 +2098,16 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         }} else {{
           sw = 1.3; so = selNode && !isActive ? 0.06 : 0.65;
         }}
+        if (lk.source === lk.target) {{
+          const loopRadius = 11 + Math.sqrt(lk.sourceNode.metric_fan_in_dependency_graph + lk.sourceNode.metric_fan_out_dependency_graph + 1) * 1.9;
+          return `<circle cx="${{lk.sourceNode.x.toFixed(1)}}" cy="${{(lk.sourceNode.y - loopRadius).toFixed(1)}}" r="${{loopRadius.toFixed(1)}}" fill="none" stroke="${{stroke}}" stroke-width="${{sw}}" stroke-opacity="${{so}}" stroke-dasharray="${{style.dash_pattern}}" aria-label="${{style.label}} self-reference. ${{style.accessible_description}}"/>`;
+        }}
         return `<line x1="${{lk.sourceNode.x.toFixed(1)}}" y1="${{lk.sourceNode.y.toFixed(1)}}" x2="${{lk.targetNode.x.toFixed(1)}}" y2="${{lk.targetNode.y.toFixed(1)}}" stroke="${{stroke}}" stroke-width="${{sw}}" stroke-opacity="${{so}}" stroke-dasharray="${{style.dash_pattern}}" aria-label="${{style.label}}. ${{style.accessible_description}}"/>`;
       }}).join('');
 
       nodeLayer.innerHTML = getVisibleNodes().map(n => {{
-        const isActive = activeNodeId===n.id;
-        const visible = !selNode || nb.has(n.id);
+        const isActive = selectedNodeIds.has(n.id);
+        const visible = !selNode || nb.has(n.id) || selectedNodeIds.has(n.id);
         const fill = nodeColor(n);
         const r = 5.5 + Math.sqrt(n.metric_fan_in_dependency_graph+n.metric_fan_out_dependency_graph+1)*1.9;
         const showLabel = isActive || (selNode && visible) ||
@@ -2068,6 +2115,9 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           (!selNode && colorMode==='community' && n.metric_fan_in_dependency_graph+n.metric_fan_out_dependency_graph >= 3);
         const fo = visible ? 1 : 0.12;
         let extras = '';
+        if (isActive) {{
+          extras += `<circle r="${{(r+4).toFixed(1)}}" fill="none" stroke="rgb(255 255 255)" stroke-width="1.5" stroke-opacity="${{visible ? 0.9 : 0.2}}"/>`;
+        }}
         if (n.has_cycle) {{
           extras += `<circle r="${{(r+4).toFixed(1)}}" fill="none" stroke="${{fill}}" stroke-width="1" stroke-dasharray="3 2" stroke-opacity="${{visible ? 0.65 : 0.08}}"/>`;
         }}
@@ -2075,7 +2125,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
           <g data-nid="${{n.id}}" transform="translate(${{n.x.toFixed(1)}} ${{n.y.toFixed(1)}})">
             ${{extras}}
             <circle r="${{r.toFixed(1)}}" fill="${{fill}}" fill-opacity="${{fo*0.92}}" stroke="${{isActive ? '#fff' : 'rgba(255,255,255,0.18)'}}" stroke-width="${{isActive ? 2 : 1}}" stroke-opacity="${{fo}}"/>
-            <text y="${{-(r+7)}}" text-anchor="middle" font-size="10.5" font-family="-apple-system,BlinkMacSystemFont,'Inter',sans-serif" fill="${{isActive ? '#fff' : 'var(--text-2)'}}" fill-opacity="${{showLabel ? fo : 0}}">${{n.display_name}}</text>
+            <text pointer-events="none" y="${{-(r+7)}}" text-anchor="middle" font-size="10.5" font-family="-apple-system,BlinkMacSystemFont,'Inter',sans-serif" fill="${{isActive ? '#fff' : 'var(--text-2)'}}" fill-opacity="${{showLabel ? fo : 0}}">${{n.display_name}}</text>
           </g>
         `;
       }}).join('');
@@ -2088,42 +2138,70 @@ fn render_html(data_json: &str, project_name: &str) -> String {
         g.addEventListener('mouseleave', () => {{
           updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null);
         }});
-        g.addEventListener('mousedown', e => {{
-          draggingNode = nodeMap.get(g.dataset.nid);
-          e.preventDefault();
-        }});
+        g.addEventListener('mousedown', e => e.stopPropagation());
         g.addEventListener('click', e => {{
           e.stopPropagation();
           const n = nodeMap.get(g.dataset.nid);
-          activeNodeId = activeNodeId===n.id ? null : n.id;
+          if (selectedNodeIds.has(n.id)) {{
+            selectedNodeIds.delete(n.id);
+            activeNodeId = selectedNodeIds.size ? [...selectedNodeIds].at(-1) : null;
+          }} else {{
+            selectedNodeIds.add(n.id);
+            activeNodeId = n.id;
+          }}
           activeCluster = null;
           renderClusters();
           updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null);
+          renderRightPanels();
           draw();
         }});
       }});
     }}
 
-    // ── pan / drag ─────────────────────────────────────────────────
-    svg.addEventListener('mousemove', e => {{
-      if (!draggingNode) return;
+    // ── marquee selection ─────────────────────────────────────────
+    function graphPoint(e) {{
       const rect = svg.getBoundingClientRect();
       const viewBox = svg.viewBox.baseVal;
       const scale = Math.min(rect.width / viewBox.width, rect.height / viewBox.height);
       const offsetX = (rect.width - viewBox.width * scale) / 2;
       const offsetY = (rect.height - viewBox.height * scale) / 2;
-      draggingNode.x = viewBox.x + (e.clientX - rect.left - offsetX) / scale;
-      draggingNode.y = viewBox.y + (e.clientY - rect.top - offsetY) / scale;
-      draggingNode.vx=0; draggingNode.vy=0;
-      draw();
+      return {{ x: viewBox.x + (e.clientX - rect.left - offsetX) / scale, y: viewBox.y + (e.clientY - rect.top - offsetY) / scale }};
+    }}
+    svg.addEventListener('mousedown', e => {{
+      if (e.target !== svg && e.target.parentNode !== linkLayer) return;
+      marqueeStart = graphPoint(e); marqueeMoved = false; marqueeJustFinished = false;
+      selectionLayer.innerHTML = '';
+      e.preventDefault();
+    }});
+    svg.addEventListener('mousemove', e => {{
+      if (!marqueeStart) return;
+      const point = graphPoint(e);
+      const x = Math.min(marqueeStart.x, point.x), y = Math.min(marqueeStart.y, point.y);
+      const width = Math.abs(point.x - marqueeStart.x), height = Math.abs(point.y - marqueeStart.y);
+      marqueeMoved ||= width > 3 || height > 3;
+      selectionLayer.innerHTML = marqueeMoved ? `<rect x="${{x}}" y="${{y}}" width="${{width}}" height="${{height}}" fill="rgba(94,106,210,0.14)" stroke="rgb(94 106 210)" stroke-width="1" stroke-dasharray="4 3" pointer-events="none"/>` : '';
     }});
     svg.addEventListener('click', e => {{
+      if (marqueeJustFinished) {{ marqueeJustFinished = false; return; }}
       if (e.target===svg||e.target.tagName==='svg') {{
-        activeNodeId=null; activeCluster=null;
-        renderClusters(); updateSelection(null); draw();
+        activeNodeId=null; activeCluster=null; selectedNodeIds.clear();
+        renderClusters(); updateSelection(null); renderRightPanels(); draw();
       }}
     }});
-    window.addEventListener('mouseup', () => {{ draggingNode=null; }});
+    window.addEventListener('mouseup', e => {{
+      if (!marqueeStart) return;
+      const end = graphPoint(e);
+      if (marqueeMoved) {{
+        const left = Math.min(marqueeStart.x, end.x), right = Math.max(marqueeStart.x, end.x);
+        const top = Math.min(marqueeStart.y, end.y), bottom = Math.max(marqueeStart.y, end.y);
+        selectedNodeIds = new Set(getVisibleNodes().filter(n => n.x >= left && n.x <= right && n.y >= top && n.y <= bottom).map(n => n.id));
+        activeNodeId = selectedNodeIds.size ? [...selectedNodeIds].at(-1) : null;
+        activeCluster = null;
+        renderClusters(); updateSelection(activeNodeId ? nodeMap.get(activeNodeId) : null); renderRightPanels(); draw();
+        marqueeJustFinished = true;
+      }}
+      marqueeStart = null; selectionLayer.innerHTML = '';
+    }});
     document.getElementById('zoom-in').addEventListener('click', () => {{
       zoom = Math.min(3, zoom * 1.25);
       const selected = activeNodeId ? nodeMap.get(activeNodeId) : null;
@@ -2139,8 +2217,8 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     document.getElementById('zoom-reset').addEventListener('click', () => {{ zoom = 1; zoomCenter = {{ x: W / 2, y: H / 2 }}; applyZoom(); }});
     document.addEventListener('keydown', e => {{
       if (e.key==='Escape') {{
-        activeNodeId=null; activeCluster=null;
-        renderClusters(); updateSelection(null); draw();
+        activeNodeId=null; activeCluster=null; selectedNodeIds.clear();
+        renderClusters(); updateSelection(null); renderRightPanels(); draw();
       }}
     }});
 
@@ -2180,7 +2258,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
       stats = graphPayload.statistics;
       maxHotspot = Math.max(...nodes.map(n=>n.metric_file_hotspot_score), 1);
       activeKinds = new Set(links.map(lk => lk.kind));
-      activeCluster=null; activeNodeId=null; draggingNode=null;
+      activeCluster=null; activeNodeId=null; selectedNodeIds.clear();
       selEl.className='empty-state';
       selEl.textContent='Click a node or cluster to inspect.';
       assignInitialLayout();
@@ -2192,11 +2270,7 @@ fn render_html(data_json: &str, project_name: &str) -> String {
     }}
 
     // ── boot ───────────────────────────────────────────────────────
-    renderPolicyFindings();
-    renderHotFunctions();
-    renderInsights();
-    renderSignalFlow();
-    renderGodotInsights();
+    renderRightPanels();
     applyZoom();
     activateGraph();
   </script>
@@ -2484,7 +2558,7 @@ mod tests {
         let html = render_html(&json, "fixture");
         assert!(html.contains("id=\"gdhealth-tooltip\""));
         assert!(html.contains("Control-flow load"));
-        assert!(html.contains("Dependencies"));
+        assert!(html.contains("Script references"));
         assert!(!html.contains(">Complexity</div>"));
         assert!(html.contains("Unresolved signal target"));
     }
