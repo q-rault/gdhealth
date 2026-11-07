@@ -69,13 +69,19 @@ fn detect_for_file(
         return None;
     }
 
-    let symbol_ids = spans.iter().map(|span| span.name.clone()).collect::<Vec<_>>();
+    let symbol_ids = spans
+        .iter()
+        .map(|span| span.name.clone())
+        .collect::<Vec<_>>();
     let communities = detect_communities(&symbol_ids, &weighted_pairs);
     let modularity = compute_modularity_for_ids(&symbol_ids, &weighted_pairs, &communities);
 
     let mut groups = BTreeMap::<usize, Vec<String>>::new();
     for community in &communities {
-        groups.entry(community.community_id).or_default().push(community.id.clone());
+        groups
+            .entry(community.community_id)
+            .or_default()
+            .push(community.id.clone());
     }
 
     if groups.len() < 2
@@ -90,10 +96,13 @@ fn detect_for_file(
         return None;
     }
 
-    let proposed_groups = groups.into_values().map(|mut group| {
-        group.sort();
-        group
-    }).collect::<Vec<_>>();
+    let proposed_groups = groups
+        .into_values()
+        .map(|mut group| {
+            group.sort();
+            group
+        })
+        .collect::<Vec<_>>();
     let _ = graph; // reserved for a future cross-file blast-radius check
 
     Some(PolicyFinding {
@@ -133,7 +142,10 @@ fn build_cohesion_pairs(
             if i == j {
                 continue;
             }
-            let count = identifier_counts.get(spans[j].name.as_str()).copied().unwrap_or(0);
+            let count = identifier_counts
+                .get(spans[j].name.as_str())
+                .copied()
+                .unwrap_or(0);
             for _ in 0..count {
                 pairs.push((spans[i].name.clone(), spans[j].name.clone()));
             }
@@ -189,7 +201,10 @@ mod tests {
     }
 
     fn temp_dir(prefix: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("gdhealth-split-file-{prefix}-{}", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "gdhealth-split-file-{prefix}-{}",
+            std::process::id()
+        ))
     }
 
     fn base_metrics(file: &str, line_count: usize) -> MetricsReport {
@@ -216,7 +231,11 @@ mod tests {
             }],
             functions: vec![],
             entities: vec![],
-            signal_flow: crate::model::SignalFlowReport { available: true, files: vec![], unresolved_references: vec![] },
+            signal_flow: crate::model::SignalFlowReport {
+                available: true,
+                files: vec![],
+                unresolved_references: vec![],
+            },
             duplication: crate::model::DuplicationReport {
                 available: true,
                 unavailable_reason: None,
@@ -268,17 +287,23 @@ func shop_log(item) -> void:
 "#;
         write_fixture(&root, "mixed.gd", content);
         let metrics = base_metrics("mixed.gd", 20);
-        let mut thresholds = ThresholdConfig::default();
-        thresholds.file_lines_warn = 5;
-        let mut config = RefactoringConfig::default();
-        config.split_file_min_symbols = 4;
-        config.split_file_modularity_gate = 0.1;
+        let thresholds = ThresholdConfig {
+            file_lines_warn: 5,
+            ..Default::default()
+        };
+        let config = RefactoringConfig {
+            split_file_min_symbols: 4,
+            split_file_modularity_gate: 0.1,
+            ..Default::default()
+        };
 
         let findings = detect(&root, &empty_graph(), &metrics, &thresholds, &config);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].rule_id, "split-file-candidate");
         match findings[0].suggested_fix.as_ref().expect("suggestion") {
-            crate::model::RefactorSuggestion::SplitFile { proposed_groups, .. } => {
+            crate::model::RefactorSuggestion::SplitFile {
+                proposed_groups, ..
+            } => {
                 assert_eq!(proposed_groups.len(), 2);
             }
             _ => panic!("expected SplitFile suggestion"),

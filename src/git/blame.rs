@@ -46,10 +46,8 @@ mod tests {
 
     #[test]
     fn run_git_text_reports_not_a_repository_outside_a_repo() {
-        let root = std::env::temp_dir().join(format!(
-            "gdhealth-blame-not-a-repo-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("gdhealth-blame-not-a-repo-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("create temp dir");
 
         let result = run_git_text(&root, &["blame", "--line-porcelain", "--", "missing.gd"]);

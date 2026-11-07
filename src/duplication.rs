@@ -209,7 +209,10 @@ mod tests {
     }
 
     fn temp_dir(prefix: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("gdhealth-duplication-{prefix}-{}", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "gdhealth-duplication-{prefix}-{}",
+            std::process::id()
+        ))
     }
 
     const DUPLICATED_BLOCK: &str = r#"func award_xp(amount: int) -> void:
@@ -248,8 +251,10 @@ mod tests {
             entity_scan: None,
         };
 
-        let mut config = DuplicationConfig::default();
-        config.min_token_window = 20;
+        let config = DuplicationConfig {
+            min_token_window: 20,
+            ..Default::default()
+        };
         let report = detect(&root, &graph, &config);
 
         assert!(report.available);
@@ -287,8 +292,10 @@ mod tests {
             entity_scan: None,
         };
 
-        let mut config = DuplicationConfig::default();
-        config.min_token_window = 20;
+        let config = DuplicationConfig {
+            min_token_window: 20,
+            ..Default::default()
+        };
         let report = detect(&root, &graph, &config);
 
         assert!(report.available);
@@ -313,8 +320,10 @@ mod tests {
             file_graph_metrics: None,
             entity_scan: None,
         };
-        let mut config = DuplicationConfig::default();
-        config.enabled = false;
+        let config = DuplicationConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let report = detect(&root, &graph, &config);
         assert!(!report.available);
 

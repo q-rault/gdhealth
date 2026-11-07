@@ -162,10 +162,8 @@ mod tests {
 
     #[test]
     fn collect_degrades_gracefully_when_not_a_git_repository() {
-        let root = std::env::temp_dir().join(format!(
-            "gdhealth-git-not-a-repo-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("gdhealth-git-not-a-repo-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("create temp dir");
         std::fs::write(root.join("main.gd"), "extends RefCounted\n").expect("write fixture");
 

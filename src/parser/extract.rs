@@ -67,13 +67,13 @@ pub fn parse_file(_path: &str, content: &str) -> ParsedFile {
         let starts_const = trimmed.starts_with("const ");
         let in_const_initializer = starts_const || const_initializer_balance > 0;
 
-        if class_name.is_none() {
-            if let Some(captures) = CLASS_NAME_RE.captures(code) {
-                class_name = captures.get(1).map(|name| ClassNameDecl {
-                    name: name.as_str().to_string(),
-                    line: line_number,
-                });
-            }
+        if class_name.is_none()
+            && let Some(captures) = CLASS_NAME_RE.captures(code)
+        {
+            class_name = captures.get(1).map(|name| ClassNameDecl {
+                name: name.as_str().to_string(),
+                line: line_number,
+            });
         }
 
         if let Some(captures) = EXTENDS_RE.captures(code) {

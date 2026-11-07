@@ -6,7 +6,7 @@
 - aligned version-bearing docs/example files updated by `just bump`
 - a matching Git tag `v<version>`
 
-GitHub Actions only builds and publishes artifacts from the pushed tag. It does not edit manifests or create tags.
+GitHub Actions only builds and publishes artifacts from the pushed tag. It does not edit manifests, create tags, or publish to crates.io: run `cargo publish` once the release workflow succeeds.
 
 ## Release
 

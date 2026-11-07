@@ -87,9 +87,21 @@ pub fn build_health_artifacts(
             edge_count: graph.edges.len(),
             policy_finding_count: policy_findings.len(),
             signal_declaration_count: metrics.files.iter().map(|file| file.signal_count).sum(),
-            signal_emit_count: metrics.files.iter().map(|file| file.signal_emit_count).sum(),
-            signal_connection_count: metrics.files.iter().map(|file| file.signal_connection_count).sum(),
-            unresolved_signal_reference_count: metrics.files.iter().map(|file| file.unresolved_signal_reference_count).sum(),
+            signal_emit_count: metrics
+                .files
+                .iter()
+                .map(|file| file.signal_emit_count)
+                .sum(),
+            signal_connection_count: metrics
+                .files
+                .iter()
+                .map(|file| file.signal_connection_count)
+                .sum(),
+            unresolved_signal_reference_count: metrics
+                .files
+                .iter()
+                .map(|file| file.unresolved_signal_reference_count)
+                .sum(),
         },
         top_files: metrics.files.iter().take(10).cloned().collect(),
         top_functions: metrics.functions.iter().take(10).cloned().collect(),

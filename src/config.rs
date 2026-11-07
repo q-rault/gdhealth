@@ -32,6 +32,12 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from("gdhealth.toml"));
 
         if !path.exists() {
+            if explicit_path.is_some() {
+                return Err(GdHealthError::ReadFile {
+                    path,
+                    source: std::io::Error::from(std::io::ErrorKind::NotFound),
+                });
+            }
             return Ok(Self::default());
         }
 

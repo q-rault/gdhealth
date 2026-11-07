@@ -211,9 +211,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut git_files = Vec::new();
         for i in 0..30 {
-            let defects = if (10..30).contains(&i) && i % 3 == 0 {
-                1
-            } else if i < 10 && (i == 1 || i == 3) {
+            let defects = if ((10..30).contains(&i) && i % 3 == 0) || i == 1 || i == 3 {
                 1
             } else {
                 0

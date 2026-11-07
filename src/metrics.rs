@@ -142,7 +142,10 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
             declarations: signal_flow.declarations,
             signal_emit_count: signal_flow.emit_count,
             signal_connection_count: signal_flow.connection_count,
-            unresolved_signal_reference_count: file_metrics.last().expect("file metric just added").unresolved_signal_reference_count,
+            unresolved_signal_reference_count: file_metrics
+                .last()
+                .expect("file metric just added")
+                .unresolved_signal_reference_count,
         });
     }
 
@@ -166,16 +169,29 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
     });
     signal_files.sort_by(|left, right| left.file.cmp(&right.file));
     unresolved_signal_references.sort_by(|left, right| {
-        (&left.file, left.line, &left.operation, &left.signal, &left.receiver)
-            .cmp(&(&right.file, right.line, &right.operation, &right.signal, &right.receiver))
+        (
+            &left.file,
+            left.line,
+            &left.operation,
+            &left.signal,
+            &left.receiver,
+        )
+            .cmp(&(
+                &right.file,
+                right.line,
+                &right.operation,
+                &right.signal,
+                &right.receiver,
+            ))
     });
 
     let entity_scan = build_entity_scan(root, &graph, &file_metrics)?;
     let entity_metrics = build_entity_metrics(&entity_scan, &file_metrics);
 
     let duplication_config = config.duplication.clone();
-    let duplication_report =
-        isolate("duplication", || duplication::detect(root, &graph, &duplication_config));
+    let duplication_report = isolate("duplication", || {
+        duplication::detect(root, &graph, &duplication_config)
+    });
 
     Ok(MetricsReport {
         metadata: OutputMetadata::default(),
@@ -399,25 +415,33 @@ pub(crate) fn find_top_level_symbol_spans(lines: &[&str]) -> Vec<SymbolSpan> {
         if let Some(captures) = FUNC_START_RE.captures(code) {
             headers.push(RawHeader {
                 kind: SymbolKind::Function,
-                name: captures.get(1).map_or_else(String::new, |m| m.as_str().to_string()),
+                name: captures
+                    .get(1)
+                    .map_or_else(String::new, |m| m.as_str().to_string()),
                 start_line,
             });
         } else if let Some(captures) = CLASS_RE.captures(code) {
             headers.push(RawHeader {
                 kind: SymbolKind::InnerClass,
-                name: captures.get(1).map_or_else(String::new, |m| m.as_str().to_string()),
+                name: captures
+                    .get(1)
+                    .map_or_else(String::new, |m| m.as_str().to_string()),
                 start_line,
             });
         } else if let Some(captures) = SIGNAL_RE.captures(code) {
             headers.push(RawHeader {
                 kind: SymbolKind::Signal,
-                name: captures.get(1).map_or_else(String::new, |m| m.as_str().to_string()),
+                name: captures
+                    .get(1)
+                    .map_or_else(String::new, |m| m.as_str().to_string()),
                 start_line,
             });
         } else if let Some(captures) = PROPERTY_RE.captures(code) {
             headers.push(RawHeader {
                 kind: SymbolKind::Property,
-                name: captures.get(1).map_or_else(String::new, |m| m.as_str().to_string()),
+                name: captures
+                    .get(1)
+                    .map_or_else(String::new, |m| m.as_str().to_string()),
                 start_line,
             });
         }
@@ -697,7 +721,10 @@ class Inner:
 "#;
         let lines = content.lines().collect::<Vec<_>>();
         let spans = find_top_level_symbol_spans(&lines);
-        let kinds = spans.iter().map(|s| (s.kind, s.name.as_str())).collect::<Vec<_>>();
+        let kinds = spans
+            .iter()
+            .map(|s| (s.kind, s.name.as_str()))
+            .collect::<Vec<_>>();
 
         assert_eq!(
             kinds,

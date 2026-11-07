@@ -881,12 +881,12 @@ fn resolve_html_output_paths(root: &Path, output: Option<&Path>) -> (PathBuf, Pa
 
 fn derive_project_name(root: &str) -> String {
     let path = Path::new(root);
-    if let Ok(canonical) = path.canonicalize() {
-        if let Some(name) = canonical.file_name() {
-            let value = name.to_string_lossy().trim().to_string();
-            if !value.is_empty() {
-                return value;
-            }
+    if let Ok(canonical) = path.canonicalize()
+        && let Some(name) = canonical.file_name()
+    {
+        let value = name.to_string_lossy().trim().to_string();
+        if !value.is_empty() {
+            return value;
         }
     }
 
@@ -919,28 +919,90 @@ fn dependency_kind_label(kind: &DependencyKind) -> &'static str {
 
 fn relation_legend() -> Vec<RelationLegendEntry> {
     vec![
-        ("extends", "Inheritance", "violet", "", "A script inherits from the referenced script."),
-        ("preload", "Preloaded script", "teal", "", "A script statically preloads the referenced script."),
-        ("const_preload", "Constant preloaded script", "green", "", "A constant statically preloads the referenced script."),
-        ("load", "Runtime-loaded script", "amber", "7 4", "A script calls load with a statically resolved target."),
-        ("unknown_script_reference", "Named class reference", "blue", "1 4", "A named class reference was statically resolved."),
-        ("signal_connection", "Event connection", "pink", "8 3 1 3", "A resolved event connection."),
-        ("autoload", "Global service access", "orange", "12 5", "A resolved global service access."),
-        ("scene_node", "Scene or node binding", "cyan", "1 4", "A resolved scene or node binding."),
-        ("group", "Group broadcast or lookup", "red", "8 3 1 3", "A resolved group broadcast or lookup."),
-        ("rpc", "Remote call", "indigo", "12 5", "A resolved remote call."),
+        (
+            "extends",
+            "Inheritance",
+            "violet",
+            "",
+            "A script inherits from the referenced script.",
+        ),
+        (
+            "preload",
+            "Preloaded script",
+            "teal",
+            "",
+            "A script statically preloads the referenced script.",
+        ),
+        (
+            "const_preload",
+            "Constant preloaded script",
+            "green",
+            "",
+            "A constant statically preloads the referenced script.",
+        ),
+        (
+            "load",
+            "Runtime-loaded script",
+            "amber",
+            "7 4",
+            "A script calls load with a statically resolved target.",
+        ),
+        (
+            "unknown_script_reference",
+            "Named class reference",
+            "blue",
+            "1 4",
+            "A named class reference was statically resolved.",
+        ),
+        (
+            "signal_connection",
+            "Event connection",
+            "pink",
+            "8 3 1 3",
+            "A resolved event connection.",
+        ),
+        (
+            "autoload",
+            "Global service access",
+            "orange",
+            "12 5",
+            "A resolved global service access.",
+        ),
+        (
+            "scene_node",
+            "Scene or node binding",
+            "cyan",
+            "1 4",
+            "A resolved scene or node binding.",
+        ),
+        (
+            "group",
+            "Group broadcast or lookup",
+            "red",
+            "8 3 1 3",
+            "A resolved group broadcast or lookup.",
+        ),
+        (
+            "rpc",
+            "Remote call",
+            "indigo",
+            "12 5",
+            "A resolved remote call.",
+        ),
     ]
     .into_iter()
     .enumerate()
-    .map(|(order, (kind, label, color, dash_pattern, explanation))| RelationLegendEntry {
-        kind,
-        label,
-        explanation,
-        color,
-        dash_pattern,
-        accessible_description: "Arrow points from the dependency user to the referenced file.",
-        order,
-    })
+    .map(
+        |(order, (kind, label, color, dash_pattern, explanation))| RelationLegendEntry {
+            kind,
+            label,
+            explanation,
+            color,
+            dash_pattern,
+            accessible_description: "Arrow points from the dependency user to the referenced file.",
+            order,
+        },
+    )
     .collect()
 }
 

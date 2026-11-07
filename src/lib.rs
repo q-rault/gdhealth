@@ -113,6 +113,16 @@ pub fn run() -> Result<()> {
             policy::enforce_fail_on(&report.findings, options.fail_on.as_deref())
         }
         Command::Health(options) => {
+            if options.output.is_some()
+                && matches!(
+                    options.format,
+                    OutputFormat::Dot | OutputFormat::EmergeJson | OutputFormat::EmergeHtml
+                )
+            {
+                return Err(crate::error::GdHealthError::UnsupportedFormat(
+                    "health does not support dot or browser output".to_string(),
+                ));
+            }
             let artifacts = health::build_health_artifacts(&config, &options)?;
 
             if let Some(output_path) = options.output.as_deref() {

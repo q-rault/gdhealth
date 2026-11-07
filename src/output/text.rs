@@ -162,10 +162,19 @@ pub fn render_health(report: &HealthReport) -> String {
             report.cross_group_dependencies.len()
         ),
         format!("policy findings: {}", report.summary.policy_finding_count),
-        format!("signal declarations: {}", report.summary.signal_declaration_count),
+        format!(
+            "signal declarations: {}",
+            report.summary.signal_declaration_count
+        ),
         format!("signal emits: {}", report.summary.signal_emit_count),
-        format!("signal connections: {}", report.summary.signal_connection_count),
-        format!("unresolved signal references: {}", report.summary.unresolved_signal_reference_count),
+        format!(
+            "signal connections: {}",
+            report.summary.signal_connection_count
+        ),
+        format!(
+            "unresolved signal references: {}",
+            report.summary.unresolved_signal_reference_count
+        ),
     ];
 
     extend_top_files(&mut lines, &report.top_files);
@@ -202,10 +211,19 @@ pub fn render_health_bundle_summary(
         ),
         format!("policy findings: {}", health.summary.policy_finding_count),
         format!("parser warnings: {}", graph.parser_warnings.len()),
-        format!("signal declarations: {}", health.summary.signal_declaration_count),
+        format!(
+            "signal declarations: {}",
+            health.summary.signal_declaration_count
+        ),
         format!("signal emits: {}", health.summary.signal_emit_count),
-        format!("signal connections: {}", health.summary.signal_connection_count),
-        format!("unresolved signal references: {}", health.summary.unresolved_signal_reference_count),
+        format!(
+            "signal connections: {}",
+            health.summary.signal_connection_count
+        ),
+        format!(
+            "unresolved signal references: {}",
+            health.summary.unresolved_signal_reference_count
+        ),
     ];
 
     extend_top_files(&mut lines, &health.top_files);
@@ -270,14 +288,63 @@ fn extend_top_files(lines: &mut Vec<String>, files: &[FileMetric]) {
 }
 
 fn extend_signal_flow(lines: &mut Vec<String>, report: &MetricsReport) {
-    let mut files = report.signal_flow.files.iter().filter(|flow| !flow.declarations.is_empty() || flow.signal_emit_count > 0 || flow.signal_connection_count > 0 || flow.unresolved_signal_reference_count > 0).collect::<Vec<_>>();
-    if files.is_empty() { return; }
-    files.sort_by(|left, right| (right.signal_emit_count + right.signal_connection_count + right.declarations.len()).cmp(&(left.signal_emit_count + left.signal_connection_count + left.declarations.len())).then_with(|| left.file.cmp(&right.file)));
+    let mut files = report
+        .signal_flow
+        .files
+        .iter()
+        .filter(|flow| {
+            !flow.declarations.is_empty()
+                || flow.signal_emit_count > 0
+                || flow.signal_connection_count > 0
+                || flow.unresolved_signal_reference_count > 0
+        })
+        .collect::<Vec<_>>();
+    if files.is_empty() {
+        return;
+    }
+    files.sort_by(|left, right| {
+        (right.signal_emit_count + right.signal_connection_count + right.declarations.len())
+            .cmp(&(left.signal_emit_count + left.signal_connection_count + left.declarations.len()))
+            .then_with(|| left.file.cmp(&right.file))
+    });
     lines.push("signal flow:".to_string());
-    lines.extend(files.into_iter().take(10).map(|flow| format!("- {} (declarations: {}, emits: {}, connections: {}, unresolved: {}){}", flow.file, flow.declarations.len(), flow.signal_emit_count, flow.signal_connection_count, flow.unresolved_signal_reference_count, if flow.declarations.is_empty() { String::new() } else { format!(" [{}]", flow.declarations.join(", ")) })));
+    lines.extend(files.into_iter().take(10).map(|flow| {
+        format!(
+            "- {} (declarations: {}, emits: {}, connections: {}, unresolved: {}){}",
+            flow.file,
+            flow.declarations.len(),
+            flow.signal_emit_count,
+            flow.signal_connection_count,
+            flow.unresolved_signal_reference_count,
+            if flow.declarations.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", flow.declarations.join(", "))
+            }
+        )
+    }));
     if !report.signal_flow.unresolved_references.is_empty() {
         lines.push("unresolved signal references (informational):".to_string());
-        lines.extend(report.signal_flow.unresolved_references.iter().take(10).map(|item| format!("- {}:{} {} {}{}", item.file, item.line, match item.operation { crate::model::SignalOperation::Emit => "emit", crate::model::SignalOperation::Connect => "connect" }, item.receiver.as_deref().unwrap_or("local"), item.signal.as_deref().unwrap_or("<unknown>"))));
+        lines.extend(
+            report
+                .signal_flow
+                .unresolved_references
+                .iter()
+                .take(10)
+                .map(|item| {
+                    format!(
+                        "- {}:{} {} {}{}",
+                        item.file,
+                        item.line,
+                        match item.operation {
+                            crate::model::SignalOperation::Emit => "emit",
+                            crate::model::SignalOperation::Connect => "connect",
+                        },
+                        item.receiver.as_deref().unwrap_or("local"),
+                        item.signal.as_deref().unwrap_or("<unknown>")
+                    )
+                }),
+        );
     }
 }
 

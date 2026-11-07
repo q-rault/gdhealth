@@ -307,8 +307,10 @@ mod tests {
     #[test]
     fn co_change_pairs_ignore_mass_edit_commits() {
         let known = BTreeSet::from(["a.gd".to_string(), "b.gd".to_string()]);
-        let mut config = GitConfig::default();
-        config.co_change_max_files_per_commit = 2;
+        let config = GitConfig {
+            co_change_max_files_per_commit: 2,
+            ..Default::default()
+        };
         let commits = vec![
             commit(
                 "x",
@@ -335,9 +337,11 @@ mod tests {
     fn percentiles_flag_only_top_quartile_with_activity_floor() {
         let mut stats = BTreeMap::new();
         for i in 0..8 {
-            let mut entry = MutableFileStats::default();
-            entry.temporal_hotspot_score = (8 - i) as f64;
-            entry.commit_count_90d = 5;
+            let entry = MutableFileStats {
+                temporal_hotspot_score: (8 - i) as f64,
+                commit_count_90d: 5,
+                ..Default::default()
+            };
             stats.insert(format!("file{i}.gd"), entry);
         }
         apply_percentiles(&mut stats);

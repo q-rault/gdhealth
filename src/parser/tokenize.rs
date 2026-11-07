@@ -8,10 +8,45 @@
 //! for clone detection.
 
 const KEYWORDS: &[&str] = &[
-    "if", "elif", "else", "for", "while", "func", "var", "const", "class_name", "class",
-    "extends", "return", "break", "continue", "pass", "match", "signal", "static", "self",
-    "true", "false", "null", "and", "or", "not", "in", "is", "as", "preload", "load", "await",
-    "yield", "enum", "export", "onready", "tool", "setget", "void", "super",
+    "if",
+    "elif",
+    "else",
+    "for",
+    "while",
+    "func",
+    "var",
+    "const",
+    "class_name",
+    "class",
+    "extends",
+    "return",
+    "break",
+    "continue",
+    "pass",
+    "match",
+    "signal",
+    "static",
+    "self",
+    "true",
+    "false",
+    "null",
+    "and",
+    "or",
+    "not",
+    "in",
+    "is",
+    "as",
+    "preload",
+    "load",
+    "await",
+    "yield",
+    "enum",
+    "export",
+    "onready",
+    "tool",
+    "setget",
+    "void",
+    "super",
 ];
 
 const MULTI_CHAR_OPS: &[&str] = &[
@@ -75,7 +110,8 @@ pub fn tokenize_kinds(content: &str) -> Vec<Token> {
         }
         if c.is_ascii_digit() {
             let start_line = line;
-            while i < n && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_') {
+            while i < n && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_')
+            {
                 i += 1;
             }
             tokens.push(Token {
@@ -132,7 +168,10 @@ mod tests {
         let b = tokenize_kinds("func revive(entity):\n    entity.hp += 10\n");
         let kinds_a = a.iter().map(|t| t.kind.clone()).collect::<Vec<_>>();
         let kinds_b = b.iter().map(|t| t.kind.clone()).collect::<Vec<_>>();
-        assert_eq!(kinds_a, kinds_b, "renamed identifiers must tokenize to the same kind stream");
+        assert_eq!(
+            kinds_a, kinds_b,
+            "renamed identifiers must tokenize to the same kind stream"
+        );
     }
 
     #[test]

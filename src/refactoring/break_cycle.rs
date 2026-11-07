@@ -35,7 +35,9 @@ fn find_cut_edges(
     let induced_edges = graph
         .edges
         .iter()
-        .filter(|edge| cycle_set.contains(edge.from.as_str()) && cycle_set.contains(edge.to.as_str()))
+        .filter(|edge| {
+            cycle_set.contains(edge.from.as_str()) && cycle_set.contains(edge.to.as_str())
+        })
         .cloned()
         .collect::<Vec<_>>();
     if induced_edges.is_empty() {
@@ -137,7 +139,10 @@ mod tests {
 
         annotate(&mut findings, &graph, &RefactoringConfig::default());
 
-        let suggestion = findings[0].suggested_fix.as_ref().expect("suggestion present");
+        let suggestion = findings[0]
+            .suggested_fix
+            .as_ref()
+            .expect("suggestion present");
         match suggestion {
             crate::model::RefactorSuggestion::BreakCycle { cut_edges } => {
                 assert_eq!(cut_edges.len(), 1);
@@ -174,8 +179,10 @@ mod tests {
             suggested_fix: None,
         }];
 
-        let mut config = RefactoringConfig::default();
-        config.max_cycle_files = 8;
+        let config = RefactoringConfig {
+            max_cycle_files: 8,
+            ..Default::default()
+        };
         annotate(&mut findings, &graph, &config);
 
         assert!(findings[0].suggested_fix.is_none());

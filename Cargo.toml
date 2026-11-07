@@ -3,7 +3,7 @@ resolver = "2"
 members = ["."]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT OR Apache-2.0"
@@ -16,6 +16,7 @@ name = "gdhealth"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
@@ -23,6 +24,7 @@ description = "Code-health CLI for Godot and GDScript repositories"
 readme = "README.md"
 keywords = ["godot", "gdscript", "cli", "code-health"]
 categories = ["command-line-utilities", "development-tools"]
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/LICENSE.md"]
 
 [lib]
 path = "src/lib.rs"

@@ -16,17 +16,11 @@ New to code-health terminology? Read the [Understanding Code Health guide](docs/
 
 ## Install
 
-Requires Rust 1.85+.
-
 ```sh
-cargo install --path .
+cargo install gdhealth
 ```
 
-Or build without installing:
-
-```sh
-cargo build --release
-```
+Requires Rust 1.96+. Prebuilt binaries are attached to each [GitHub release](https://github.com/q-rault/gdhealth/releases).
 
 ## Quickstart
 

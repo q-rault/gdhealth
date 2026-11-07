@@ -21,21 +21,42 @@ fn health_reports_git_signals_on_a_real_repo() {
     write_config(&root);
     write_file(&root, "a.gd", "extends RefCounted\n");
     write_file(&root, "b.gd", "extends RefCounted\n");
-    commit_at(&root, "initial commit", BASE_TIME - 10 * DAY, "alice", "alice@example.com");
+    commit_at(
+        &root,
+        "initial commit",
+        BASE_TIME - 10 * DAY,
+        "alice",
+        "alice@example.com",
+    );
 
-    write_file(&root, "a.gd", "extends RefCounted\n\nfunc ready() -> void:\n    pass\n");
-    commit_at(&root, "fix: null check on ready", BASE_TIME - 2 * DAY, "alice", "alice@example.com");
+    write_file(
+        &root,
+        "a.gd",
+        "extends RefCounted\n\nfunc ready() -> void:\n    pass\n",
+    );
+    commit_at(
+        &root,
+        "fix: null check on ready",
+        BASE_TIME - 2 * DAY,
+        "alice",
+        "alice@example.com",
+    );
 
     let output = run_gdhealth(&root, &["health", "--root", "."]);
     assert_success(&output);
 
-    let health: Value = serde_json::from_str(&read_bundle_file(&root, "health.json"))
-        .expect("parse health.json");
+    let health: Value =
+        serde_json::from_str(&read_bundle_file(&root, "health.json")).expect("parse health.json");
     assert_eq!(health["git_available"].as_bool(), Some(true));
     assert_eq!(health["repo_bus_factor"].as_u64(), Some(1));
 
-    let top_churn = health["top_churn_files"].as_array().expect("top_churn_files array");
-    assert!(!top_churn.is_empty(), "expected at least one file with git history");
+    let top_churn = health["top_churn_files"]
+        .as_array()
+        .expect("top_churn_files array");
+    assert!(
+        !top_churn.is_empty(),
+        "expected at least one file with git history"
+    );
     let a_gd = top_churn
         .iter()
         .find(|entry| entry["file"] == "a.gd")
@@ -43,9 +64,12 @@ fn health_reports_git_signals_on_a_real_repo() {
     assert_eq!(a_gd["commit_count_total"].as_u64(), Some(2));
     assert_eq!(a_gd["prior_defect_count"].as_u64(), Some(1));
 
-    let summary = fs::read_to_string(root.join("reports/code-health/summary.txt"))
-        .expect("read summary.txt");
-    assert!(summary.contains("git signals:"), "summary should mention git signals");
+    let summary =
+        fs::read_to_string(root.join("reports/code-health/summary.txt")).expect("read summary.txt");
+    assert!(
+        summary.contains("git signals:"),
+        "summary should mention git signals"
+    );
 
     fs::remove_dir_all(&root).ok();
 }
@@ -61,8 +85,8 @@ fn not_a_git_repo_degrades_gracefully() {
     let output = run_gdhealth(&root, &["health", "--root", "."]);
     assert_success(&output);
 
-    let health: Value = serde_json::from_str(&read_bundle_file(&root, "health.json"))
-        .expect("parse health.json");
+    let health: Value =
+        serde_json::from_str(&read_bundle_file(&root, "health.json")).expect("parse health.json");
     assert_eq!(health["git_available"].as_bool(), Some(false));
     assert!(health["git_unavailable_reason"].is_string());
 
@@ -75,13 +99,19 @@ fn no_git_flag_disables_git_signals_even_inside_a_repo() {
     init_git_repo(&root);
     write_config(&root);
     write_file(&root, "a.gd", "extends RefCounted\n");
-    commit_at(&root, "initial commit", BASE_TIME, "alice", "alice@example.com");
+    commit_at(
+        &root,
+        "initial commit",
+        BASE_TIME,
+        "alice",
+        "alice@example.com",
+    );
 
     let output = run_gdhealth(&root, &["health", "--root", ".", "--no-git"]);
     assert_success(&output);
 
-    let health: Value = serde_json::from_str(&read_bundle_file(&root, "health.json"))
-        .expect("parse health.json");
+    let health: Value =
+        serde_json::from_str(&read_bundle_file(&root, "health.json")).expect("parse health.json");
     assert_eq!(health["git_available"].as_bool(), Some(false));
 
     fs::remove_dir_all(&root).ok();
@@ -94,13 +124,56 @@ fn git_outputs_are_deterministic_across_runs() {
     write_config(&root);
     write_file(&root, "a.gd", "extends RefCounted\n");
     write_file(&root, "b.gd", "extends RefCounted\n");
-    commit_at(&root, "initial commit", BASE_TIME - 20 * DAY, "alice", "alice@example.com");
-    write_file(&root, "b.gd", "extends RefCounted\n\nfunc ready() -> void:\n    pass\n");
-    commit_at(&root, "fix: edge case", BASE_TIME - 5 * DAY, "bob", "bob@example.com");
+    commit_at(
+        &root,
+        "initial commit",
+        BASE_TIME - 20 * DAY,
+        "alice",
+        "alice@example.com",
+    );
+    write_file(
+        &root,
+        "b.gd",
+        "extends RefCounted\n\nfunc ready() -> void:\n    pass\n",
+    );
+    commit_at(
+        &root,
+        "fix: edge case",
+        BASE_TIME - 5 * DAY,
+        "bob",
+        "bob@example.com",
+    );
 
-    let first = run_and_read(&root, &["health", "--root", ".", "--format", "json", "--output", "run1.json"], "run1.json");
-    let second = run_and_read(&root, &["health", "--root", ".", "--format", "json", "--output", "run2.json"], "run2.json");
-    assert_eq!(first, second, "git-derived health output must be byte-identical across runs");
+    let first = run_and_read(
+        &root,
+        &[
+            "health",
+            "--root",
+            ".",
+            "--format",
+            "json",
+            "--output",
+            "run1.json",
+        ],
+        "run1.json",
+    );
+    let second = run_and_read(
+        &root,
+        &[
+            "health",
+            "--root",
+            ".",
+            "--format",
+            "json",
+            "--output",
+            "run2.json",
+        ],
+        "run2.json",
+    );
+    assert_eq!(
+        first, second,
+        "git-derived health output must be byte-identical across runs"
+    );
 
     fs::remove_dir_all(&root).ok();
 }

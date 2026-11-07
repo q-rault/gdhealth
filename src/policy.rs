@@ -457,7 +457,11 @@ mod tests {
                 hotspot_score: 99,
             }],
             entities: Vec::new(),
-            signal_flow: crate::model::SignalFlowReport { available: true, files: Vec::new(), unresolved_references: Vec::new() },
+            signal_flow: crate::model::SignalFlowReport {
+                available: true,
+                files: Vec::new(),
+                unresolved_references: Vec::new(),
+            },
             duplication: crate::model::DuplicationReport {
                 available: true,
                 unavailable_reason: None,

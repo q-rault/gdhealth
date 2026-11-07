@@ -1,4 +1,4 @@
-root: C:/Users/me/AppData/Local/Temp/godot-open-rpg
+root: godot-open-rpg
 files: 78
 edges: 36
 cycles: 0

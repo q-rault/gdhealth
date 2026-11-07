@@ -9,15 +9,17 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def read(path: str) -> str:
-    return (ROOT / path).read_text()
+    return (ROOT / path).read_text(encoding="utf8")
 
 
 def replace(path: str, pattern: str, repl: str, *, flags: int = re.MULTILINE, count: int = 1) -> None:
     file_path = ROOT / path
-    text, changed = re.subn(pattern, repl, file_path.read_text(), count=count, flags=flags)
+    # Read and write without newline translation: the repo is LF on every platform.
+    original = file_path.read_bytes().decode("utf8").replace(chr(13), "")
+    text, changed = re.subn(pattern, repl, original, count=count, flags=flags)
     if changed < 1:
         raise SystemExit(f"ERROR: pattern not found in {path}")
-    file_path.write_text(text)
+    file_path.write_bytes(text.encode("utf8"))
     print(f"  {path}")
 
 

@@ -153,10 +153,22 @@ func tick() -> void:
         Some(1),
         "health.json must have schema_version: 1"
     );
-    assert!(health_json["summary"].is_object(), "health.json must have summary");
-    assert!(health_json["top_files"].is_array(), "health.json must have top_files");
-    assert!(health_json["top_functions"].is_array(), "health.json must have top_functions");
-    assert!(health_json["cycles"].is_array(), "health.json must have cycles");
+    assert!(
+        health_json["summary"].is_object(),
+        "health.json must have summary"
+    );
+    assert!(
+        health_json["top_files"].is_array(),
+        "health.json must have top_files"
+    );
+    assert!(
+        health_json["top_functions"].is_array(),
+        "health.json must have top_functions"
+    );
+    assert!(
+        health_json["cycles"].is_array(),
+        "health.json must have cycles"
+    );
     assert!(
         health_json["policy_findings"].is_array(),
         "health.json must have policy_findings"
@@ -508,7 +520,9 @@ fn signal_flow_is_additive_and_does_not_change_graph_or_policy_behavior() {
         &fixture_root,
         &bundle_config("warning", "[]"),
         &[
-            ("player.gd", r#"extends RefCounted
+            (
+                "player.gd",
+                r#"extends RefCounted
 signal health_changed(current: int)
 func _ready():
     emit_signal("health_changed", 1)
@@ -520,20 +534,47 @@ func _ready():
     print("health_changed.emit()") # connect("health_changed")
 func _on_health_changed(_current: int):
     pass
-"#),
+"#,
+            ),
             ("other.gd", "extends RefCounted\n"),
         ],
     );
 
-    let metrics = run_and_read(&fixture_root, &["metrics", "--root", ".", "--format", "json", "--output", "metrics.json"], "metrics.json");
+    let metrics = run_and_read(
+        &fixture_root,
+        &[
+            "metrics",
+            "--root",
+            ".",
+            "--format",
+            "json",
+            "--output",
+            "metrics.json",
+        ],
+        "metrics.json",
+    );
     let metrics: Value = serde_json::from_str(&metrics).expect("parse metrics");
-    let player = metrics["files"].as_array().unwrap().iter().find(|file| file["file"] == "player.gd").unwrap();
+    let player = metrics["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["file"] == "player.gd")
+        .unwrap();
     assert_eq!(player["signal_count"].as_u64(), Some(1));
     assert_eq!(player["signal_emit_count"].as_u64(), Some(2));
     assert_eq!(player["signal_connection_count"].as_u64(), Some(2));
-    assert_eq!(player["unresolved_signal_reference_count"].as_u64(), Some(2));
+    assert_eq!(
+        player["unresolved_signal_reference_count"].as_u64(),
+        Some(2)
+    );
     assert_eq!(metrics["signal_flow"]["files"][0]["file"], "other.gd");
-    assert_eq!(metrics["signal_flow"]["unresolved_references"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        metrics["signal_flow"]["unresolved_references"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     let player_entity = metrics["entities"]
         .as_array()
         .unwrap()
@@ -542,16 +583,41 @@ func _on_health_changed(_current: int):
         .unwrap();
     assert_eq!(player_entity["signal_emit_count"].as_u64(), Some(2));
 
-    let graph = run_and_read(&fixture_root, &["graph", "--root", ".", "--format", "json", "--output", "graph.json"], "graph.json");
+    let graph = run_and_read(
+        &fixture_root,
+        &[
+            "graph",
+            "--root",
+            ".",
+            "--format",
+            "json",
+            "--output",
+            "graph.json",
+        ],
+        "graph.json",
+    );
     let graph: Value = serde_json::from_str(&graph).expect("parse graph");
     assert_eq!(graph["edges"].as_array().unwrap().len(), 0);
     let health_output = run_gdhealth(&fixture_root, &["health", "--root", "."]);
     assert_success(&health_output);
-    let health: Value = serde_json::from_str(&fs::read_to_string(fixture_root.join("reports/code-health/health.json")).unwrap()).unwrap();
-    assert_eq!(health["summary"]["signal_declaration_count"].as_u64(), Some(1));
+    let health: Value = serde_json::from_str(
+        &fs::read_to_string(fixture_root.join("reports/code-health/health.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        health["summary"]["signal_declaration_count"].as_u64(),
+        Some(1)
+    );
     assert_eq!(health["summary"]["signal_emit_count"].as_u64(), Some(2));
-    assert!(fs::read_to_string(fixture_root.join("reports/code-health/summary.txt")).unwrap().contains("signal declarations: 1"));
-    assert_success(&run_gdhealth(&fixture_root, &["policy", "--root", ".", "--fail-on", "critical"]));
+    assert!(
+        fs::read_to_string(fixture_root.join("reports/code-health/summary.txt"))
+            .unwrap()
+            .contains("signal declarations: 1")
+    );
+    assert_success(&run_gdhealth(
+        &fixture_root,
+        &["policy", "--root", ".", "--fail-on", "critical"],
+    ));
     fs::remove_dir_all(&fixture_root).ok();
 }
 
@@ -621,12 +687,11 @@ fn unsupported_format_combination_fails_with_message() {
 
     let output3 = run_gdhealth(
         &fixture_root,
-        &["health", "--root", ".", "--output", "out.json", "--format", "dot"],
+        &[
+            "health", "--root", ".", "--output", "out.json", "--format", "dot",
+        ],
     );
-    assert!(
-        !output3.status.success(),
-        "health --format dot should fail"
-    );
+    assert!(!output3.status.success(), "health --format dot should fail");
 
     fs::remove_dir_all(&fixture_root).ok();
 }
@@ -790,4 +855,14 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .expect("system time")
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}-{}-{stamp}", std::process::id()))
+}
+
+#[test]
+fn explicit_config_that_does_not_exist_is_an_error() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_gdhealth"))
+        .args(["--config", "does-not-exist.toml", "metrics"])
+        .output()
+        .expect("run gdhealth");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("does-not-exist.toml"));
 }

@@ -32,10 +32,7 @@ pub fn walk_commits(root: &Path) -> Result<Vec<CommitRecord>, GitError> {
     let mut records = parse_metadata(&metadata_text);
 
     let numstat_format = format!("--format={RECORD_SEP}%H");
-    let numstat_text = run_git_text(
-        root,
-        &["log", "--no-merges", &numstat_format, "--numstat"],
-    )?;
+    let numstat_text = run_git_text(root, &["log", "--no-merges", &numstat_format, "--numstat"])?;
     let deltas_by_hash = parse_numstat(&numstat_text);
 
     for record in &mut records {
