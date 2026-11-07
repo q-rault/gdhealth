@@ -69,6 +69,7 @@ jobs:
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
       - name: Package (Windows)
+        if: matrix.archive == 'zip'
         shell: pwsh
         run: |
           $Version = $env:GITHUB_REF_NAME
