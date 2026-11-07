@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub project: ProjectConfig,
@@ -87,48 +87,6 @@ impl Config {
         )?;
 
         Ok(())
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        let mut groups = BTreeMap::new();
-        groups.insert(
-            "root_gameplay".to_string(),
-            vec![
-                "*.gd".to_string(),
-                "!test/**".to_string(),
-                "!server/**".to_string(),
-                "!client/**".to_string(),
-                "!net/**".to_string(),
-                "!levels/main_level/hud/**".to_string(),
-            ],
-        );
-        groups.insert("net".to_string(), vec!["net/**".to_string()]);
-        groups.insert(
-            "ai".to_string(),
-            vec!["ai/**".to_string(), "server/ai/**".to_string()],
-        );
-        groups.insert(
-            "hud".to_string(),
-            vec![
-                "levels/main_level/hud/**".to_string(),
-                "levels/main_level/hud.gd".to_string(),
-            ],
-        );
-        groups.insert("server".to_string(), vec!["server/**".to_string()]);
-        groups.insert("test".to_string(), vec!["test/**".to_string()]);
-
-        Self {
-            project: ProjectConfig::default(),
-            discovery: DiscoveryConfig::default(),
-            groups,
-            thresholds: ThresholdConfig::default(),
-            policy: PolicyConfig::default(),
-            git: GitConfig::default(),
-            refactoring: RefactoringConfig::default(),
-            duplication: DuplicationConfig::default(),
-        }
     }
 }
 

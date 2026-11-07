@@ -224,10 +224,7 @@ fn policy_fails_on_critical_forbidden_dependency() {
 const HUD = preload("res://levels/main_level/hud/hud_panel.gd")
 "#,
             ),
-            (
-                "levels/main_level/hud/hud_panel.gd",
-                "extends RefCounted\n",
-            ),
+            ("levels/main_level/hud/hud_panel.gd", "extends RefCounted\n"),
         ],
     );
 
@@ -341,10 +338,7 @@ const STATE = preload("res://shared/state.gd")
 "#,
             ),
             ("shared/state.gd", "extends RefCounted\n"),
-            (
-                "levels/main_level/hud/hud_panel.gd",
-                "extends RefCounted\n",
-            ),
+            ("levels/main_level/hud/hud_panel.gd", "extends RefCounted\n"),
         ],
     );
 
