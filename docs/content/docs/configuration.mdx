@@ -1,9 +1,18 @@
 ---
 title: Configuration
-description: All gdhealth.toml sections, fields, types, and defaults.
+description: All gdhealth settings, in gdsuite.toml or gdhealth.toml — sections, fields, types, and defaults.
 ---
 
-gdhealth reads its configuration from `gdhealth.toml` at the project root (or from the path given by `--config`). If no config file is found, built-in defaults are used — you can run gdhealth without any config file.
+gdhealth reads its configuration from the folder it runs in (or from the path given by `--config`):
+
+1. the `[health]` section of `gdsuite.toml`, for a project that uses [gdsuite](https://github.com/q-rault/gdsuite) and keeps every tool's settings in one file;
+2. otherwise `gdhealth.toml`.
+
+If neither is found, built-in defaults are used — you can run gdhealth without any config file.
+
+The sections below are the same in both files: `[groups]` in `gdhealth.toml` is `[health.groups]` in `gdsuite.toml`, `[thresholds]` is `[health.thresholds]`, and so on.
+
+**Keep gdhealth's settings in one file.** When `gdsuite.toml` has a `[health]` section, a `gdhealth.toml` next to it is ignored, with a warning: the two files are not merged.
 
 ## Full example
 

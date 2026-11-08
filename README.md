@@ -164,7 +164,9 @@ gdhealth policy --root . --format json --fail-on warning
 
 ## Configuration
 
-All behavior is driven by `gdhealth.toml`. Place it at your project root or pass `--config <path>`.
+All behavior is driven by `gdhealth.toml`, or by the `[health]` section of `gdsuite.toml` in a project that uses [gdsuite](https://github.com/q-rault/gdsuite) and keeps every tool's settings there. The keys are the same: `[groups]` in `gdhealth.toml` is `[health.groups]` in `gdsuite.toml`. Place the file at your project root or pass `--config <path>`.
+
+Keep gdhealth's settings in one file. When `gdsuite.toml` has a `[health]` section, a `gdhealth.toml` next to it is ignored, with a warning; the two are not merged.
 
 See the [full configuration reference](docs/content/docs/configuration.mdx) for all options.
 
