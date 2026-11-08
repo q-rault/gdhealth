@@ -8,7 +8,7 @@
 //! detection. Comments, whitespace, blank lines and indentation are trivia
 //! in the lossless tree and are skipped.
 
-use crate::parser::syntax::is_code_token;
+use crate::parser::syntax::{is_code_token, token_line};
 use gdsyntax::SyntaxKind;
 
 #[derive(Debug, Clone)]
@@ -18,21 +18,14 @@ pub struct Token {
 }
 
 pub fn tokenize_kinds(content: &str) -> Vec<Token> {
-    // Token-level line numbers come from a line-start table: calling
-    // `SyntaxTree::position` per token would rescan the file each time.
-    let line_starts = std::iter::once(0)
-        .chain(content.match_indices('\n').map(|(index, _)| index + 1))
-        .collect::<Vec<_>>();
-    let (root, _errors) = gdsyntax::lossless_tree(content);
-    root.descendants_with_tokens()
+    let tree = gdsyntax::parse(content);
+    tree.root()
+        .descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .filter(is_code_token)
-        .map(|token| {
-            let offset = usize::from(token.text_range().start());
-            Token {
-                kind: kind_name(token.kind()),
-                line: line_starts.partition_point(|start| *start <= offset),
-            }
+        .map(|token| Token {
+            kind: kind_name(token.kind()),
+            line: token_line(&tree, &token),
         })
         .collect()
 }

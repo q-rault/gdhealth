@@ -146,9 +146,9 @@ dependencies = [
 
 [[package]]
 name = "gdsyntax"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4a7cc542619decafd30228a73ff1d459e77a514082d5d2a0d57d14696349553"
+checksum = "ad51e809e028549528d09580b364280b6ab6fd2bf0cb276164e40de6b0b42874"
 dependencies = [
  "rowan",
 ]
