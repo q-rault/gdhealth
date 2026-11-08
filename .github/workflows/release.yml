@@ -88,9 +88,41 @@ jobs:
           name: gdhealth-${{ matrix.target }}
           path: ${{ env.ARCHIVE }}
 
+  publish:
+    name: Publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check the tag matches the crate version
+        shell: bash
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "gdhealth") | .version')
+          if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match gdhealth version ${VERSION} in Cargo.toml"
+            exit 1
+          fi
+
+      - name: Get a crates.io token
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Publish
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
   release:
     name: Create GitHub release
-    needs: build
+    needs: [build, publish]
     runs-on: ubuntu-latest
 
     steps:
