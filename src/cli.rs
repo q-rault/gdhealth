@@ -13,7 +13,8 @@ use std::path::PathBuf;
 pub struct Cli {
     #[arg(
         long,
-        help = "Path to gdhealth.toml (default: gdhealth.toml in the current directory)"
+        help = "Path to gdhealth.toml, or to a gdsuite.toml with a [health] section (default: \
+                gdsuite.toml's [health] section in the current directory, then gdhealth.toml)"
     )]
     pub config: Option<PathBuf>,
 

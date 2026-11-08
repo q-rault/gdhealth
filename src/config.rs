@@ -3,7 +3,7 @@ use globset::Glob;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -25,30 +25,115 @@ pub struct Config {
     pub duplication: DuplicationConfig,
 }
 
-impl Config {
-    pub fn load(explicit_path: Option<&Path>) -> Result<Self> {
-        let path = explicit_path
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("gdhealth.toml"));
+/// gdsuite's configuration file, which can hold gdhealth's settings in a
+/// `[health]` section.
+const SUITE_FILE: &str = "gdsuite.toml";
+const SUITE_SECTION: &str = "health";
+const OWN_FILE: &str = "gdhealth.toml";
+/// The sections of gdhealth.toml, which are the keys of `[health]`.
+const SUITE_SECTION_KEYS: &[&str] = &[
+    "project",
+    "discovery",
+    "groups",
+    "thresholds",
+    "policy",
+    "git",
+    "refactoring",
+    "duplication",
+];
 
-        if !path.exists() {
-            if explicit_path.is_some() {
+impl Config {
+    /// Load the settings from `--config`, or else from the current folder:
+    /// the `[health]` section of `gdsuite.toml` if it has one, then
+    /// `gdhealth.toml`.
+    pub fn load(explicit_path: Option<&Path>) -> Result<Self> {
+        Self::load_from(Path::new("."), explicit_path)
+    }
+
+    fn load_from(dir: &Path, explicit_path: Option<&Path>) -> Result<Self> {
+        if let Some(path) = explicit_path {
+            let path = dir.join(path);
+            if !path.exists() {
                 return Err(GdHealthError::ReadFile {
                     path,
                     source: std::io::Error::from(std::io::ErrorKind::NotFound),
                 });
             }
-            return Ok(Self::default());
+            let is_suite = path.file_name().is_some_and(|name| name == SUITE_FILE);
+            if is_suite {
+                return Self::from_suite_section(&path)?.ok_or_else(|| {
+                    GdHealthError::InvalidConfig {
+                        message: format!("{} has no [{SUITE_SECTION}] section", path.display()),
+                    }
+                });
+            }
+            return Self::from_file(&path);
         }
 
-        let content = fs::read_to_string(&path).map_err(|source| GdHealthError::ReadFile {
-            path: path.clone(),
+        let suite = dir.join(SUITE_FILE);
+        let own = dir.join(OWN_FILE);
+        if let Some(config) = Self::from_suite_section(&suite)? {
+            if own.exists() {
+                eprintln!(
+                    "gdhealth: warning: {SUITE_FILE} has a [{SUITE_SECTION}] section, so \
+                     {OWN_FILE} is ignored. Keep gdhealth's settings in one of them."
+                );
+            }
+            return Ok(config);
+        }
+        if own.exists() {
+            return Self::from_file(&own);
+        }
+        Ok(Self::default())
+    }
+
+    fn from_file(path: &Path) -> Result<Self> {
+        let content = fs::read_to_string(path).map_err(|source| GdHealthError::ReadFile {
+            path: path.to_path_buf(),
             source,
         })?;
-
         let config: Self = toml::from_str(&content)?;
         config.validate()?;
         Ok(config)
+    }
+
+    /// The settings in a `gdsuite.toml`'s `[health]` section, if the file
+    /// exists and has one.
+    fn from_suite_section(path: &Path) -> Result<Option<Self>> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(path).map_err(|source| GdHealthError::ReadFile {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let mut table: toml::Table = toml::from_str(&content)?;
+        let Some(section) = table.remove(SUITE_SECTION) else {
+            return Ok(None);
+        };
+        // gdhealth.toml tolerates unknown keys, but in gdsuite.toml one would
+        // silently replace gdhealth.toml, as a [health] section written for
+        // gdsuite 0.1 (`command`, `fail_on`, `bundle_dir`) would.
+        if let Some(keys) = section.as_table() {
+            let known = SUITE_SECTION_KEYS;
+            if let Some(unknown) = keys.keys().find(|key| !known.contains(&key.as_str())) {
+                return Err(GdHealthError::InvalidConfig {
+                    message: format!(
+                        "{} [{SUITE_SECTION}]: unknown key `{unknown}`; expected one of {}.                          A [health] section from an older gdsuite is removed by `gdsuite migrate`",
+                        path.display(),
+                        known.join(", ")
+                    ),
+                });
+            }
+        }
+        let config: Self =
+            section
+                .try_into()
+                .map_err(|error: toml::de::Error| GdHealthError::InvalidConfig {
+                    message: format!("{} [{SUITE_SECTION}]: {error}", path.display()),
+                })?;
+        config.validate()?;
+        Ok(Some(config))
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -381,6 +466,91 @@ fn validate_threshold_pair(name: &str, warn: usize, critical: usize) -> Result<(
 mod tests {
     use super::{Config, ForbiddenDependencyRule};
     use crate::error::GdHealthError;
+    use std::path::Path;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("gdhealth-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_gdsuite_toml_health_section_comes_before_gdhealth_toml() {
+        let dir = temp_dir("suite");
+        std::fs::write(dir.join("gdhealth.toml"), "[groups]\nown = [\"own/**\"]\n").unwrap();
+
+        // A gdsuite.toml without [health] leaves gdhealth.toml in charge.
+        std::fs::write(dir.join("gdsuite.toml"), "[project]\nroot = \".\"\n").unwrap();
+        let config = Config::load_from(&dir, None).unwrap();
+        assert!(config.groups.contains_key("own"));
+
+        std::fs::write(
+            dir.join("gdsuite.toml"),
+            "[project]\nroot = \".\"\n\n[health.groups]\nsuite = [\"suite/**\"]\n\n[health.thresholds]\ncyclomatic_warn = 9\n",
+        )
+        .unwrap();
+        let config = Config::load_from(&dir, None).unwrap();
+        // gdhealth.toml is ignored, not merged.
+        assert!(!config.groups.contains_key("own"));
+        assert!(config.groups.contains_key("suite"));
+        assert_eq!(config.thresholds.cyclomatic_warn, 9);
+
+        // --config can name gdsuite.toml too.
+        let config = Config::load_from(&dir, Some(Path::new("gdsuite.toml"))).unwrap();
+        assert!(config.groups.contains_key("suite"));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_gdsuite_toml_without_health_section_named_by_config_is_an_error() {
+        let dir = temp_dir("suite-missing");
+        std::fs::write(dir.join("gdsuite.toml"), "[project]\nroot = \".\"\n").unwrap();
+
+        let error = Config::load_from(&dir, Some(Path::new("gdsuite.toml"))).unwrap_err();
+        assert!(error.to_string().contains("no [health] section"), "{error}");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_health_section_from_an_older_gdsuite_is_an_error() {
+        let dir = temp_dir("suite-legacy");
+        std::fs::write(dir.join("gdhealth.toml"), "").unwrap();
+        std::fs::write(
+            dir.join("gdsuite.toml"),
+            "[health]
+command = \"health\"
+fail_on = \"critical\"
+",
+        )
+        .unwrap();
+
+        let error = Config::load_from(&dir, None).unwrap_err().to_string();
+        assert!(error.contains("unknown key `command`"), "{error}");
+        assert!(error.contains("gdsuite migrate"), "{error}");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_invalid_health_section_is_an_error() {
+        let dir = temp_dir("suite-invalid");
+        std::fs::write(
+            dir.join("gdsuite.toml"),
+            "[health.groups]\nbad = \"not a list\"\n",
+        )
+        .unwrap();
+
+        let error = Config::load_from(&dir, None).unwrap_err();
+        assert!(
+            error.to_string().contains("gdsuite.toml [health]"),
+            "{error}"
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn rejects_invalid_forbidden_dependency_severity() {
