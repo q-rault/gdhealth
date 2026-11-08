@@ -1,57 +1,15 @@
-//! Lightweight token-KIND tokenizer for duplication detection.
+//! Token-KIND stream for duplication detection.
 //!
-//! Deliberately not a real GDScript lexer: it classifies each lexeme into a
-//! coarse *kind* (keyword, operator, `IDENT`, `NUM`, `STR`) rather than
-//! preserving the source text. Identifiers all collapse to the same `IDENT`
-//! kind regardless of name, so a block that was copy-pasted and then had
-//! its variables renamed still hashes identically — that's the whole point
-//! for clone detection.
+//! Each GDScript token from gdsyntax's tokenizer is reduced to a coarse
+//! *kind* rather than its text: every identifier is `IDENT`, every number
+//! `NUM`, every string `STR`, and keywords, operators and punctuation keep
+//! their own kind. A block that was copy-pasted and then had its variables
+//! renamed still hashes identically — that's the whole point for clone
+//! detection. Comments, whitespace, blank lines and indentation are trivia
+//! in the lossless tree and are skipped.
 
-const KEYWORDS: &[&str] = &[
-    "if",
-    "elif",
-    "else",
-    "for",
-    "while",
-    "func",
-    "var",
-    "const",
-    "class_name",
-    "class",
-    "extends",
-    "return",
-    "break",
-    "continue",
-    "pass",
-    "match",
-    "signal",
-    "static",
-    "self",
-    "true",
-    "false",
-    "null",
-    "and",
-    "or",
-    "not",
-    "in",
-    "is",
-    "as",
-    "preload",
-    "load",
-    "await",
-    "yield",
-    "enum",
-    "export",
-    "onready",
-    "tool",
-    "setget",
-    "void",
-    "super",
-];
-
-const MULTI_CHAR_OPS: &[&str] = &[
-    "==", "!=", "<=", ">=", "->", ":=", "+=", "-=", "*=", "/=", "%=", "**", "&&", "||",
-];
+use crate::parser::syntax::is_code_token;
+use gdsyntax::SyntaxKind;
 
 #[derive(Debug, Clone)]
 pub struct Token {
@@ -60,102 +18,32 @@ pub struct Token {
 }
 
 pub fn tokenize_kinds(content: &str) -> Vec<Token> {
-    let chars = content.chars().collect::<Vec<_>>();
-    let n = chars.len();
-    let mut tokens = Vec::new();
-    let mut i = 0usize;
-    let mut line = 1usize;
+    // Token-level line numbers come from a line-start table: calling
+    // `SyntaxTree::position` per token would rescan the file each time.
+    let line_starts = std::iter::once(0)
+        .chain(content.match_indices('\n').map(|(index, _)| index + 1))
+        .collect::<Vec<_>>();
+    let (root, _errors) = gdsyntax::lossless_tree(content);
+    root.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(is_code_token)
+        .map(|token| {
+            let offset = usize::from(token.text_range().start());
+            Token {
+                kind: kind_name(token.kind()),
+                line: line_starts.partition_point(|start| *start <= offset),
+            }
+        })
+        .collect()
+}
 
-    while i < n {
-        let c = chars[i];
-
-        if c == '\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if c.is_whitespace() {
-            i += 1;
-            continue;
-        }
-        if c == '#' {
-            while i < n && chars[i] != '\n' {
-                i += 1;
-            }
-            continue;
-        }
-        if c == '"' || c == '\'' {
-            let start_line = line;
-            let quote = c;
-            i += 1;
-            while i < n {
-                if chars[i] == '\\' && i + 1 < n {
-                    i += 2;
-                    continue;
-                }
-                if chars[i] == '\n' {
-                    line += 1;
-                }
-                if chars[i] == quote {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            tokens.push(Token {
-                kind: "STR".to_string(),
-                line: start_line,
-            });
-            continue;
-        }
-        if c.is_ascii_digit() {
-            let start_line = line;
-            while i < n && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_')
-            {
-                i += 1;
-            }
-            tokens.push(Token {
-                kind: "NUM".to_string(),
-                line: start_line,
-            });
-            continue;
-        }
-        if c.is_alphabetic() || c == '_' {
-            let start = i;
-            let start_line = line;
-            while i < n && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                i += 1;
-            }
-            let word = chars[start..i].iter().collect::<String>();
-            let kind = if KEYWORDS.contains(&word.as_str()) {
-                format!("KW_{}", word.to_ascii_uppercase())
-            } else {
-                "IDENT".to_string()
-            };
-            tokens.push(Token {
-                kind,
-                line: start_line,
-            });
-            continue;
-        }
-
-        if i + 1 < n {
-            let two = [c, chars[i + 1]].iter().collect::<String>();
-            if MULTI_CHAR_OPS.contains(&two.as_str()) {
-                tokens.push(Token { kind: two, line });
-                i += 2;
-                continue;
-            }
-        }
-
-        tokens.push(Token {
-            kind: c.to_string(),
-            line,
-        });
-        i += 1;
+fn kind_name(kind: SyntaxKind) -> String {
+    match kind {
+        SyntaxKind::IDENTIFIER => "IDENT".to_string(),
+        SyntaxKind::INT | SyntaxKind::FLOAT => "NUM".to_string(),
+        SyntaxKind::STRING | SyntaxKind::STRING_NAME | SyntaxKind::NODE_PATH => "STR".to_string(),
+        other => format!("{other:?}"),
     }
-
-    tokens
 }
 
 #[cfg(test)]
@@ -178,14 +66,17 @@ mod tests {
     fn distinguishes_keywords_and_operators_by_kind() {
         let tokens = tokenize_kinds("if a == b:\n    pass\n");
         let kinds = tokens.iter().map(|t| t.kind.as_str()).collect::<Vec<_>>();
-        assert_eq!(kinds, vec!["KW_IF", "IDENT", "==", "IDENT", ":", "KW_PASS"]);
+        assert_eq!(
+            kinds,
+            vec!["IF_KW", "IDENT", "EQUAL_EQUAL", "IDENT", "COLON", "PASS_KW"]
+        );
     }
 
     #[test]
     fn skips_comments_and_strings_collapse_to_one_token() {
         let tokens = tokenize_kinds("# a comment\nvar name = \"hello world\"\n");
         let kinds = tokens.iter().map(|t| t.kind.as_str()).collect::<Vec<_>>();
-        assert_eq!(kinds, vec!["KW_VAR", "IDENT", "=", "STR"]);
+        assert_eq!(kinds, vec!["VAR_KW", "IDENT", "EQUAL", "STR"]);
     }
 
     #[test]

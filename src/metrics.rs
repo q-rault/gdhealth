@@ -9,33 +9,13 @@ use crate::graph::build_graph;
 use crate::isolate::isolate;
 use crate::model::{FileMetric, FunctionMetric, MetricsReport, OutputMetadata};
 use crate::model::{SignalFileFlow, SignalFlowReport};
-use crate::parser::signal_flow::analyze_signal_flow;
-use regex::Regex;
+use crate::parser::signal_flow::analyze_signal_flow_tree;
+use crate::parser::structure::{self, FunctionKind};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use std::sync::LazyLock;
 
-static SIGNAL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*signal\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid signal regex")
-});
-
-static FUNC_START_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(?:static\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").expect("valid func regex")
-});
-
-static CONTROL_FLOW_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(if|elif|else|for|while|match)\b").expect("valid control-flow regex")
-});
-
-static CLASS_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)").expect("valid class regex")
-});
-
-static PROPERTY_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:var|const)\s+([A-Za-z_][A-Za-z0-9_]*)")
-        .expect("valid property regex")
-});
+pub(crate) use crate::parser::structure::SymbolSpan;
 
 pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<MetricsReport> {
     let graph = build_graph(config, options)?;
@@ -58,8 +38,9 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
 
     for file in &graph.files {
         let content = read_file(root, &file.path)?;
-        let analysis = analyze_file(&file.path, &content);
-        let signal_flow = analyze_signal_flow(&file.path, &content);
+        let tree = gdsyntax::parse(content);
+        let analysis = analyze_tree(&tree);
+        let signal_flow = analyze_signal_flow_tree(&file.path, &tree);
         let outgoing_dependency_count = graph
             .edges
             .iter()
@@ -68,6 +49,12 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
         let incoming_dependency_count = incoming_counts.get(&file.path).copied().unwrap_or(0);
         let cycle_count = cycle_memberships.get(&file.path).copied().unwrap_or(0);
 
+        let method_names = analysis
+            .functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::Func)
+            .map(|function| function.function_name.clone())
+            .collect::<Vec<_>>();
         let mut file_function_metrics = analysis
             .functions
             .into_iter()
@@ -113,15 +100,15 @@ pub fn compute_metrics(config: &Config, options: &CommandOptions) -> Result<Metr
         file_metrics.push(FileMetric {
             file: file.path.clone(),
             line_count: file.line_count,
-            function_count: file_function_metrics.len(),
-            number_of_methods: file_function_metrics.len(),
+            function_count: method_names.len(),
+            number_of_methods: method_names.len(),
             signal_count: signal_flow.declarations.len(),
             signal_emit_count: signal_flow.emit_count,
             signal_connection_count: signal_flow.connection_count,
             unresolved_signal_reference_count: signal_flow.unresolved_references.len(),
-            public_function_count: file_function_metrics
+            public_function_count: method_names
                 .iter()
-                .filter(|function| !function.function_name.starts_with('_'))
+                .filter(|name| !name.starts_with('_'))
                 .count(),
             outgoing_dependency_count,
             incoming_dependency_count,
@@ -264,13 +251,24 @@ fn compute_file_hotspot_score(
 
 #[derive(Debug)]
 pub(crate) struct FileAnalysis {
-    #[allow(dead_code)] // retained for direct metric-analysis tests and symbol tooling
-    signal_count: usize,
+    /// `func` declarations and property accessors with a body.
     pub(crate) functions: Vec<FunctionAnalysis>,
+}
+
+impl FileAnalysis {
+    /// `func` declarations, at file level and in inner classes; property
+    /// accessors are measured but are not methods.
+    pub(crate) fn method_count(&self) -> usize {
+        self.functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::Func)
+            .count()
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct FunctionAnalysis {
+    kind: FunctionKind,
     function_name: String,
     start_line: usize,
     end_line: usize,
@@ -281,370 +279,66 @@ pub(crate) struct FunctionAnalysis {
     parameter_count: usize,
 }
 
+#[cfg(test)]
 pub(crate) fn analyze_file(_path: &str, content: &str) -> FileAnalysis {
-    let lines = content.lines().collect::<Vec<_>>();
-    let signal_count = lines
-        .iter()
-        .filter(|line| SIGNAL_RE.is_match(strip_comments(line)))
-        .count();
-
-    let function_headers = find_function_headers(&lines);
-    let mut functions = Vec::new();
-
-    for index in 0..function_headers.len() {
-        let header = &function_headers[index];
-        let end_line = determine_function_end_line(index, &function_headers, lines.len());
-        let branch_count =
-            compute_branch_count(&lines[header.start_line.saturating_sub(1)..end_line]);
-        let max_nesting_depth =
-            compute_max_nesting_depth(&lines[header.body_start_line.saturating_sub(1)..end_line]);
-        let parameter_count = count_parameters(&header.signature_text);
-        let line_count = end_line.saturating_sub(header.start_line) + 1;
-
-        functions.push(FunctionAnalysis {
-            function_name: header.function_name.clone(),
-            start_line: header.start_line,
-            end_line,
-            line_count,
-            branch_count,
-            cyclomatic_estimate: 1 + branch_count,
-            max_nesting_depth,
-            parameter_count,
-        });
-    }
-
-    FileAnalysis {
-        signal_count,
-        functions,
-    }
+    analyze_tree(&gdsyntax::parse(content))
 }
 
-#[derive(Debug)]
-struct FunctionHeader {
-    function_name: String,
-    start_line: usize,
-    body_start_line: usize,
-    signature_text: String,
-}
-
-fn find_function_headers(lines: &[&str]) -> Vec<FunctionHeader> {
-    let mut headers = Vec::new();
-    let mut line_index = 0;
-
-    while line_index < lines.len() {
-        let line = lines[line_index];
-        let code = strip_comments(line);
-        if let Some(captures) = FUNC_START_RE.captures(code) {
-            let start_line = line_index + 1;
-            let function_name = captures
-                .get(1)
-                .map(|name| name.as_str().to_string())
-                .unwrap_or_else(|| "<anonymous>".to_string());
-
-            let mut signature_parts = vec![code.trim_end().to_string()];
-            let mut body_start_line = start_line;
-            let mut signature_index = line_index;
-
-            while !strip_comments(lines[signature_index]).contains(':')
-                && signature_index + 1 < lines.len()
-            {
-                signature_index += 1;
-                signature_parts.push(
-                    strip_comments(lines[signature_index])
-                        .trim_end()
-                        .to_string(),
-                );
-                body_start_line = signature_index + 1;
-            }
-
-            headers.push(FunctionHeader {
-                function_name,
-                start_line,
-                body_start_line,
-                signature_text: signature_parts.join(" "),
-            });
-
-            line_index = signature_index + 1;
-            continue;
-        }
-
-        line_index += 1;
-    }
-
-    headers
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SymbolKind {
-    Function,
-    InnerClass,
-    Signal,
-    Property,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct SymbolSpan {
-    #[allow(dead_code)] // read by tests and reserved for future weighting
-    pub kind: SymbolKind,
-    pub name: String,
-    pub start_line: usize,
-    pub end_line: usize,
-}
-
-/// Top-level (indentation-0) symbol spans in a file: functions, inner
-/// classes, signals, and var/const properties — the substrate for the
-/// Split File refactoring suggestion. Reuses the same header-detection and
-/// end-line inference as `find_function_headers`, generalized from one
-/// symbol kind to four.
-pub(crate) fn find_top_level_symbol_spans(lines: &[&str]) -> Vec<SymbolSpan> {
-    struct RawHeader {
-        kind: SymbolKind,
-        name: String,
-        start_line: usize,
-    }
-
-    let mut headers = Vec::<RawHeader>::new();
-
-    for (index, line) in lines.iter().enumerate() {
-        if indentation_width(line) != 0 {
-            continue;
-        }
-        let code = strip_comments(line);
-        let start_line = index + 1;
-
-        if let Some(captures) = FUNC_START_RE.captures(code) {
-            headers.push(RawHeader {
-                kind: SymbolKind::Function,
-                name: captures
-                    .get(1)
-                    .map_or_else(String::new, |m| m.as_str().to_string()),
-                start_line,
-            });
-        } else if let Some(captures) = CLASS_RE.captures(code) {
-            headers.push(RawHeader {
-                kind: SymbolKind::InnerClass,
-                name: captures
-                    .get(1)
-                    .map_or_else(String::new, |m| m.as_str().to_string()),
-                start_line,
-            });
-        } else if let Some(captures) = SIGNAL_RE.captures(code) {
-            headers.push(RawHeader {
-                kind: SymbolKind::Signal,
-                name: captures
-                    .get(1)
-                    .map_or_else(String::new, |m| m.as_str().to_string()),
-                start_line,
-            });
-        } else if let Some(captures) = PROPERTY_RE.captures(code) {
-            headers.push(RawHeader {
-                kind: SymbolKind::Property,
-                name: captures
-                    .get(1)
-                    .map_or_else(String::new, |m| m.as_str().to_string()),
-                start_line,
-            });
-        }
-    }
-
-    let total_lines = lines.len();
-    headers
-        .iter()
-        .enumerate()
-        .filter(|(_, header)| !header.name.is_empty())
-        .map(|(index, header)| {
-            let end_line = headers
-                .get(index + 1)
-                .map(|next| next.start_line.saturating_sub(1))
-                .unwrap_or(total_lines);
-            SymbolSpan {
-                kind: header.kind,
-                name: header.name.clone(),
-                start_line: header.start_line,
-                end_line,
-            }
+pub(crate) fn analyze_tree(tree: &gdsyntax::SyntaxTree) -> FileAnalysis {
+    let functions = structure::functions(tree)
+        .into_iter()
+        .map(|shape| FunctionAnalysis {
+            kind: shape.kind,
+            function_name: shape.name,
+            start_line: shape.start_line,
+            end_line: shape.end_line,
+            line_count: shape.end_line - shape.start_line + 1,
+            branch_count: shape.branch_count,
+            cyclomatic_estimate: 1 + shape.branch_count,
+            max_nesting_depth: shape.max_nesting_depth,
+            parameter_count: shape.parameter_count,
         })
-        .collect()
+        .collect();
+    FileAnalysis { functions }
 }
 
-fn determine_function_end_line(
-    index: usize,
-    headers: &[FunctionHeader],
-    total_lines: usize,
-) -> usize {
-    match headers.get(index + 1) {
-        Some(next) => next.start_line.saturating_sub(1),
-        None => total_lines,
-    }
-}
-
-fn compute_branch_count(lines: &[&str]) -> usize {
-    lines
-        .iter()
-        .filter(|line| CONTROL_FLOW_RE.is_match(strip_comments(line)))
-        .count()
-}
-
-fn compute_max_nesting_depth(lines: &[&str]) -> usize {
-    let mut stack = Vec::<usize>::new();
-    let mut max_depth = 0;
-
-    for line in lines {
-        let code = strip_comments(line).trim_end();
-        if code.trim().is_empty() {
-            continue;
-        }
-
-        let indent = indentation_width(line);
-        while let Some(last_indent) = stack.last().copied() {
-            if indent <= last_indent {
-                stack.pop();
-            } else {
-                break;
-            }
-        }
-
-        if CONTROL_FLOW_RE.is_match(code) && code.ends_with(':') {
-            stack.push(indent);
-            max_depth = max_depth.max(stack.len());
-        }
-    }
-
-    max_depth
-}
-
-fn count_parameters(signature_text: &str) -> usize {
-    let Some(open_index) = signature_text.find('(') else {
-        return 0;
-    };
-    let Some(close_index) = find_matching_paren(signature_text, open_index) else {
-        return 0;
-    };
-    let params = &signature_text[open_index + 1..close_index];
-    split_top_level_csv(params).len()
-}
-
-fn find_matching_paren(text: &str, open_index: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    for (index, ch) in text.char_indices().skip(open_index) {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn split_top_level_csv(text: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut depth_paren = 0usize;
-    let mut depth_bracket = 0usize;
-    let mut depth_brace = 0usize;
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-
-    for ch in text.chars() {
-        match ch {
-            '\'' if !in_double_quote => {
-                in_single_quote = !in_single_quote;
-                current.push(ch);
-            }
-            '"' if !in_single_quote => {
-                in_double_quote = !in_double_quote;
-                current.push(ch);
-            }
-            '(' if !in_single_quote && !in_double_quote => {
-                depth_paren += 1;
-                current.push(ch);
-            }
-            ')' if !in_single_quote && !in_double_quote => {
-                depth_paren = depth_paren.saturating_sub(1);
-                current.push(ch);
-            }
-            '[' if !in_single_quote && !in_double_quote => {
-                depth_bracket += 1;
-                current.push(ch);
-            }
-            ']' if !in_single_quote && !in_double_quote => {
-                depth_bracket = depth_bracket.saturating_sub(1);
-                current.push(ch);
-            }
-            '{' if !in_single_quote && !in_double_quote => {
-                depth_brace += 1;
-                current.push(ch);
-            }
-            '}' if !in_single_quote && !in_double_quote => {
-                depth_brace = depth_brace.saturating_sub(1);
-                current.push(ch);
-            }
-            ',' if !in_single_quote
-                && !in_double_quote
-                && depth_paren == 0
-                && depth_bracket == 0
-                && depth_brace == 0 =>
-            {
-                let part = current.trim();
-                if !part.is_empty() {
-                    parts.push(part.to_string());
-                }
-                current.clear();
-            }
-            _ => current.push(ch),
-        }
-    }
-
-    let tail = current.trim();
-    if !tail.is_empty() {
-        parts.push(tail.to_string());
-    }
-
-    parts
-}
-
-fn indentation_width(line: &str) -> usize {
-    line.chars()
-        .take_while(|ch| *ch == ' ' || *ch == '\t')
-        .map(|ch| if ch == '\t' { 4 } else { 1 })
-        .sum()
-}
-
-fn strip_comments(line: &str) -> &str {
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    for (index, ch) in line.char_indices() {
-        match ch {
-            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-            '"' if !in_single_quote => in_double_quote = !in_double_quote,
-            '#' if !in_single_quote && !in_double_quote => return &line[..index],
-            _ => {}
-        }
-    }
-    line
+/// File-level symbol spans: functions, inner classes, signals and
+/// var/const properties — the substrate for the Split File refactoring
+/// suggestion.
+pub(crate) fn find_top_level_symbol_spans(tree: &gdsyntax::SyntaxTree) -> Vec<SymbolSpan> {
+    structure::top_level_symbol_spans(tree)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        SymbolKind, analyze_file, compute_file_hotspot_score, compute_function_hotspot_score,
-        count_parameters, find_top_level_symbol_spans,
+        FileAnalysis, FunctionAnalysis, analyze_file, compute_file_hotspot_score,
+        compute_function_hotspot_score, find_top_level_symbol_spans,
     };
     use crate::model::FunctionMetric;
+    use crate::parser::structure::{FunctionKind, SymbolKind};
 
-    #[test]
-    fn counts_multiline_parameters() {
-        let signature = "static func death( eid: int, t: int, ticks_until_respawn: int, killer: String, victim: String ) -> GameCommand:";
-        assert_eq!(count_parameters(signature), 5);
+    fn function<'a>(analysis: &'a FileAnalysis, name: &str) -> &'a FunctionAnalysis {
+        analysis
+            .functions
+            .iter()
+            .find(|function| function.function_name == name)
+            .unwrap_or_else(|| panic!("no function {name}"))
     }
 
     #[test]
-    fn computes_function_metrics_from_indented_blocks() {
+    fn counts_multiline_parameters() {
+        let analysis = analyze_file(
+            "sample.gd",
+            "static func death(\n\teid: int,\n\tt: int, ticks_until_respawn: int,\n\tkiller: String, victim: String\n) -> int:\n\treturn 0\n",
+        );
+        assert_eq!(analysis.functions[0].parameter_count, 5);
+        assert_eq!(analysis.functions[0].start_line, 1);
+        assert_eq!(analysis.functions[0].end_line, 6);
+    }
+
+    #[test]
+    fn computes_function_metrics_from_the_tree() {
         let analysis = analyze_file(
             "sample.gd",
             r#"
@@ -662,11 +356,134 @@ static func helper(a: int, b: int = 2) -> int:
 "#,
         );
 
-        assert_eq!(analysis.signal_count, 1);
         assert_eq!(analysis.functions.len(), 2);
-        assert_eq!(analysis.functions[0].branch_count, 3);
+        // `if` and `for` are decisions; `else` is not.
+        assert_eq!(analysis.functions[0].branch_count, 2);
         assert_eq!(analysis.functions[0].max_nesting_depth, 2);
+        // The function ends on its last line of code, not at the next `func`.
+        assert_eq!(analysis.functions[0].end_line, 9);
         assert_eq!(analysis.functions[1].parameter_count, 2);
+    }
+
+    #[test]
+    fn counts_boolean_operators_ternaries_and_match_patterns() {
+        let analysis = analyze_file(
+            "sample.gd",
+            r#"
+func pick(kind, a, b):
+    if a and b or not a:
+        pass
+    var x = 1 if a else 2
+    match kind:
+        1, 2:
+            pass
+        3 when a && b:
+            pass
+        var other:
+            pass
+        _:
+            pass
+"#,
+        );
+        let pick = function(&analysis, "pick");
+        // if + and + or + ternary + patterns 1, 2, 3 + when + &&;
+        // `var other` and `_` are catch-alls.
+        assert_eq!(pick.branch_count, 9);
+        assert_eq!(pick.cyclomatic_estimate, 10);
+        assert_eq!(pick.max_nesting_depth, 1);
+    }
+
+    #[test]
+    fn keeps_lambdas_in_their_function_and_reads_inner_classes() {
+        let analysis = analyze_file(
+            "sample.gd",
+            r#"
+func outer():
+    var cb = func named_lambda(value):
+        if value:
+            return 1
+        return 0
+    return cb
+
+class Inner:
+    func inner_method(a, b, c):
+        while a:
+            a -= 1
+"#,
+        );
+        let names = analysis
+            .functions
+            .iter()
+            .map(|function| function.function_name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["outer", "inner_method"]);
+        let outer = function(&analysis, "outer");
+        assert_eq!((outer.start_line, outer.end_line), (2, 7));
+        assert_eq!(outer.branch_count, 1);
+        assert_eq!(outer.max_nesting_depth, 1);
+        let inner = function(&analysis, "inner_method");
+        assert_eq!(inner.parameter_count, 3);
+        assert_eq!(inner.branch_count, 1);
+        assert_eq!(analysis.method_count(), 2);
+    }
+
+    #[test]
+    fn measures_property_accessors_but_does_not_count_them_as_methods() {
+        let analysis = analyze_file(
+            "sample.gd",
+            r#"
+var hp: int = 0:
+    set(value):
+        if value < 0:
+            value = 0
+        hp = value
+    get:
+        return hp
+
+func heal():
+    hp += 1
+"#,
+        );
+        let setter = function(&analysis, "hp.set");
+        assert_eq!(setter.kind, FunctionKind::Accessor);
+        assert_eq!((setter.start_line, setter.end_line), (3, 6));
+        assert_eq!(setter.branch_count, 1);
+        assert_eq!(setter.parameter_count, 1);
+        assert_eq!(function(&analysis, "hp.get").line_count, 2);
+        // The accessor's `if` does not leak into a neighbouring function.
+        assert_eq!(function(&analysis, "heal").branch_count, 0);
+        assert_eq!(analysis.method_count(), 1);
+    }
+
+    #[test]
+    fn ignores_code_shaped_text_in_strings_and_comments() {
+        let analysis = analyze_file(
+            "sample.gd",
+            "func describe():\n    var help = \"\"\"\nfunc not_a_function():\n    if true:\n        pass\n\"\"\"\n    # if this were code\n    return help\n",
+        );
+        assert_eq!(analysis.functions.len(), 1);
+        assert_eq!(analysis.functions[0].branch_count, 0);
+        assert_eq!(analysis.functions[0].end_line, 8);
+    }
+
+    #[test]
+    fn inline_blocks_count_toward_nesting() {
+        let analysis = analyze_file(
+            "sample.gd",
+            "func guard(x):\n    if not x: return\n    for i in x: if i: print(i)\n",
+        );
+        assert_eq!(analysis.functions[0].max_nesting_depth, 2);
+        assert_eq!(analysis.functions[0].branch_count, 3);
+    }
+
+    #[test]
+    fn measures_the_readable_part_of_a_file_with_syntax_errors() {
+        let analysis = analyze_file(
+            "broken.gd",
+            "func ok(a):\n    if a:\n        pass\n\nfunc broken(:\n    pass\n\nfunc after():\n    while true:\n        break\n",
+        );
+        assert_eq!(function(&analysis, "ok").branch_count, 1);
+        assert_eq!(function(&analysis, "after").branch_count, 1);
     }
 
     #[test]
@@ -719,23 +536,24 @@ func _ready() -> void:
 class Inner:
     var nested_field = 1
 "#;
-        let lines = content.lines().collect::<Vec<_>>();
-        let spans = find_top_level_symbol_spans(&lines);
+        let tree = gdsyntax::parse(content);
+        let spans = find_top_level_symbol_spans(&tree);
         let kinds = spans
             .iter()
-            .map(|s| (s.kind, s.name.as_str()))
+            .map(|s| (s.kind, s.name.as_str(), s.start_line, s.end_line))
             .collect::<Vec<_>>();
 
         assert_eq!(
             kinds,
             vec![
-                (SymbolKind::Signal, "hp_changed"),
-                (SymbolKind::Property, "max_hp"),
-                (SymbolKind::Function, "_ready"),
-                (SymbolKind::InnerClass, "Inner"),
+                (SymbolKind::Signal, "hp_changed", 3, 3),
+                (SymbolKind::Property, "max_hp", 5, 5),
+                (SymbolKind::Function, "_ready", 7, 10),
+                (SymbolKind::InnerClass, "Inner", 12, 13),
             ]
         );
         // `local_only` (indented, inside _ready) must not appear as a top-level span.
         assert!(!spans.iter().any(|s| s.name == "local_only"));
+        assert_eq!(spans[2].identifiers.get("local_only"), Some(&2));
     }
 }

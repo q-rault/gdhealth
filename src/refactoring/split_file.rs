@@ -10,14 +10,9 @@ use crate::analysis::{compute_modularity_for_ids, detect_communities};
 use crate::config::{RefactoringConfig, ThresholdConfig};
 use crate::metrics::find_top_level_symbol_spans;
 use crate::model::{GraphReport, MetricsReport, PolicyFinding, RefactorSuggestion};
-use crate::parser::extract::parse_file;
-use regex::Regex;
+use crate::parser::extract::parse_tree;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::sync::LazyLock;
-
-static IDENT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[A-Za-z_][A-Za-z0-9_]*").expect("valid identifier regex"));
 
 // A "split into N groups" suggestion stops being actionable once N gets
 // large — Louvain on a sparse, mostly-locally-connected symbol graph tends
@@ -57,14 +52,14 @@ fn detect_for_file(
     let path = &file_metric.file;
     let absolute_path = root.join(path);
     let content = std::fs::read_to_string(&absolute_path).ok()?;
-    let lines = content.lines().collect::<Vec<_>>();
+    let tree = gdsyntax::parse(content);
 
-    let spans = find_top_level_symbol_spans(&lines);
+    let spans = find_top_level_symbol_spans(&tree);
     if spans.len() < config.split_file_min_symbols {
         return None;
     }
 
-    let weighted_pairs = build_cohesion_pairs(&spans, &lines, &content, path);
+    let weighted_pairs = build_cohesion_pairs(&spans, &tree, path);
     if weighted_pairs.is_empty() {
         return None;
     }
@@ -129,15 +124,13 @@ fn detect_for_file(
 ///   preload/load/extends target within their line ranges.
 fn build_cohesion_pairs(
     spans: &[crate::metrics::SymbolSpan],
-    lines: &[&str],
-    content: &str,
+    tree: &gdsyntax::SyntaxTree,
     path: &str,
 ) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
 
     for i in 0..spans.len() {
-        let body = span_text(spans[i].start_line, spans[i].end_line, lines);
-        let identifier_counts = count_identifiers(&body);
+        let identifier_counts = &spans[i].identifiers;
         for j in 0..spans.len() {
             if i == j {
                 continue;
@@ -152,7 +145,7 @@ fn build_cohesion_pairs(
         }
     }
 
-    let parsed = parse_file(path, content);
+    let parsed = parse_tree(path, tree);
     let mut targets_by_span = vec![BTreeSet::<String>::new(); spans.len()];
     for dependency in &parsed.dependencies {
         let target_key = format!("{:?}", dependency.target);
@@ -172,21 +165,6 @@ fn build_cohesion_pairs(
     }
 
     pairs
-}
-
-fn span_text(start_line: usize, end_line: usize, lines: &[&str]) -> String {
-    lines
-        .get(start_line.saturating_sub(1)..end_line.min(lines.len()))
-        .unwrap_or(&[])
-        .join("\n")
-}
-
-fn count_identifiers(text: &str) -> BTreeMap<String, usize> {
-    let mut counts = BTreeMap::new();
-    for identifier in IDENT_RE.find_iter(text) {
-        *counts.entry(identifier.as_str().to_string()).or_insert(0) += 1;
-    }
-    counts
 }
 
 #[cfg(test)]

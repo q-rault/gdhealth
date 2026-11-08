@@ -1,10 +1,10 @@
 use crate::error::{GdHealthError, Result};
-use crate::metrics::analyze_file;
+use crate::metrics::analyze_tree;
 use crate::model::{
     DependencyEdge, DependencyKind, EntityEdge, EntityMetric, EntityNode, EntityScanReport,
     FileMetric, GraphAggregateMetrics, GraphCommunity, GraphReport,
 };
-use crate::parser::extract::parse_file;
+use crate::parser::extract::parse_tree;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -78,8 +78,9 @@ pub fn build_entity_scan(
                 path: absolute_path.clone(),
                 source,
             })?;
-        let parsed = parse_file(&file.path, &content);
-        let analysis = analyze_file(&file.path, &content);
+        let tree = gdsyntax::parse(content);
+        let parsed = parse_tree(&file.path, &tree);
+        let analysis = analyze_tree(&tree);
         let class_name = parsed.class_name.as_ref().map(|item| item.name.clone());
         let entity_id = class_name.clone().unwrap_or_else(|| file.path.clone());
         let display_name = class_name
@@ -101,7 +102,7 @@ pub fn build_entity_scan(
             start_line: 1,
             end_line: file.line_count.max(1),
             line_count: file.line_count,
-            method_count: analysis.functions.len(),
+            method_count: analysis.method_count(),
         });
     }
 

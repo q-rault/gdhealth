@@ -45,13 +45,21 @@ The **file hotspot score** is a composite of function complexity totals, fan-in/
 
 The **function hotspot score** is computed as `cyclomatic × nesting × params × lines`. It identifies specific functions that are simultaneously complex, deeply nested, parameter-heavy, and long.
 
+### Functions
+
+gdhealth reads each `.gd` file with [gdsyntax](https://crates.io/crates/gdsyntax), a port of Godot's own GDScript parser, so code inside strings and comments is never mistaken for code.
+
+A function row is reported for every `func`, at file level and in inner classes, and for every property accessor with a body (named `hp.set` or `hp.get`). Accessors are measured, but `function_count`, `number_of_methods` and `public_function_count` count `func` declarations only. A lambda is part of the function that contains it.
+
+A function starts on its `func` line (annotations on lines of their own are not included) and ends on its last line of code: trailing comments and blank lines do not count toward `line_count`.
+
 ### Cyclomatic complexity
 
-An estimate of decision-point count within a function, based on counting `if`, `elif`, `else`, `for`, `while`, and `match` keywords. Higher values mean more test paths and higher cognitive load.
+McCabe's count: one plus one per decision. Decisions are `if`, `elif`, `while`, `for`, each `and`/`or` (`&&`/`||`), each ternary `a if c else b`, each `when` guard, and each match pattern except a catch-all (`_` or a lone `var x`). `else` and `match` itself are not decisions. `branch_count` is the number of decisions. Higher values mean more test paths and higher cognitive load.
 
 ### Nesting depth
 
-The maximum indentation depth reached inside a function, measured in logical levels. Deep nesting makes control flow hard to follow and is a leading indicator of code that needs decomposition.
+The deepest level of nested `if`/`elif`/`else`, `for`, `while` and `match` blocks inside a function, one-line blocks such as `if x: return` included. A lambda adds no level. Deep nesting makes control flow hard to follow and is a leading indicator of code that needs decomposition.
 
 ### Weighted sum complexity (ws_complexity)
 
@@ -88,14 +96,15 @@ In `health.json`, cycles are arrays of file paths:
 
 ## Parser warnings
 
-Parser warnings are emitted when the text-based extractor detects an ambiguous or incomplete situation:
+Parser warnings are emitted when the extractor detects an ambiguous or incomplete situation:
 
 - **Duplicate `class_name`** — the same class name is declared in multiple files. The parser can't resolve which one a reference refers to and uses the first match. This is not an error, but it can cause confusing reference resolution.
 - **Unresolved reference** — a dependency reference couldn't be resolved to a known file. This happens for dynamic `load(variable)` calls.
+- **Syntax error** — the file is not valid GDScript; the warning gives Godot's message for the first error and how many more there are. gdhealth still measures the file: the parser recovers the way Godot's editor does, and only the code it could not read is left out of the file's functions, dependencies and signals. A function whose header cannot be read may be missing from the report, so fix syntax errors before trusting that file's numbers.
 
 Parser warnings do not cause a non-zero exit. They appear in `parser_warnings` in `graph.json` and in `summary.txt`.
 
-**When to act:** Duplicate class names are worth fixing if they cause confusing behavior. Unresolved references are expected for dynamic loads — no action needed unless you care about completeness.
+**When to act:** Duplicate class names are worth fixing if they cause confusing behavior. Unresolved references are expected for dynamic loads — no action needed unless you care about completeness. Syntax errors mean Godot cannot load the script either.
 
 ---
 

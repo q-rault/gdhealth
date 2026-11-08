@@ -1,6 +1,7 @@
 use crate::model::DependencyKind;
-use regex::Regex;
-use std::sync::LazyLock;
+use crate::parser::syntax::{first_code_line, string_literal, syntax_error_warning, token_line};
+use gdsyntax::ast::{AstNode, CallExpr, Expr, Extends, PreloadExpr};
+use gdsyntax::{SyntaxKind, SyntaxToken, SyntaxTree};
 
 #[derive(Debug, Clone)]
 pub struct ParserWarning {
@@ -9,7 +10,7 @@ pub struct ParserWarning {
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ParsedFile {
     pub class_name: Option<ClassNameDecl>,
     pub dependencies: Vec<DependencyReference>,
@@ -35,98 +36,69 @@ pub enum DependencyTarget {
     NamedClass(String),
 }
 
-static CLASS_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^\s*(?:@\w+\s+)*class_name\s+([A-Za-z_][A-Za-z0-9_]*)")
-        .expect("valid class_name regex")
-});
+pub fn parse_file(path: &str, content: &str) -> ParsedFile {
+    let tree = gdsyntax::parse(content);
+    parse_tree(path, &tree)
+}
 
-static EXTENDS_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^\s*extends\s+(?:"([^"]+)"|'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))"#)
-        .expect("valid extends regex")
-});
+/// `class_name`, `extends`, `preload(...)` and `load(...)` from the typed
+/// tree. Strings and comments are never read as code, and calls that span
+/// lines are found.
+pub fn parse_tree(path: &str, tree: &SyntaxTree) -> ParsedFile {
+    let file = tree.file();
+    let class_name = file.class_name().and_then(|declaration| {
+        let name = declaration.name()?;
+        Some(ClassNameDecl {
+            name: name.text().to_string(),
+            line: token_line(tree, &name),
+        })
+    });
 
-static PRELOAD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"preload\(\s*(?:"([^"]+)"|'([^']+)')\s*\)"#).expect("valid preload regex")
-});
-
-static LOAD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?:^|[^A-Za-z_])load\(\s*(?:"([^"]+)"|'([^']+)')\s*\)"#)
-        .expect("valid load regex")
-});
-
-pub fn parse_file(_path: &str, content: &str) -> ParsedFile {
-    let mut class_name = None;
     let mut dependencies = Vec::new();
-    let warnings = Vec::new();
-    let mut const_initializer_balance = 0isize;
-
-    for (index, line) in content.lines().enumerate() {
-        let line_number = index + 1;
-        let code = strip_comments(line);
-        let trimmed = code.trim_start();
-        let starts_const = trimmed.starts_with("const ");
-        let in_const_initializer = starts_const || const_initializer_balance > 0;
-
-        if class_name.is_none()
-            && let Some(captures) = CLASS_NAME_RE.captures(code)
-        {
-            class_name = captures.get(1).map(|name| ClassNameDecl {
-                name: name.as_str().to_string(),
-                line: line_number,
+    for node in tree.root().descendants() {
+        if let Some(extends) = Extends::cast(node.clone()) {
+            dependencies.extend(extends_dependency(tree, &extends));
+        } else if let Some(preload) = PreloadExpr::cast(node.clone()) {
+            let Some(resource_path) = preload.path().as_ref().and_then(string_literal) else {
+                continue;
+            };
+            let in_const = node
+                .ancestors()
+                .any(|ancestor| ancestor.kind() == SyntaxKind::CONST);
+            dependencies.push(DependencyReference {
+                kind: if in_const {
+                    DependencyKind::ConstPreload
+                } else {
+                    DependencyKind::Preload
+                },
+                target: DependencyTarget::ResourcePath(resource_path),
+                line: first_code_line(tree, &node).unwrap_or(1),
+            });
+        } else if let Some(call) = CallExpr::cast(node.clone()) {
+            let Some(name) = callee_name(&call).filter(|name| name.text() == "load") else {
+                continue;
+            };
+            let Some(resource_path) = call.arguments().next().as_ref().and_then(string_literal)
+            else {
+                continue;
+            };
+            dependencies.push(DependencyReference {
+                kind: DependencyKind::Load,
+                target: DependencyTarget::ResourcePath(resource_path),
+                line: token_line(tree, &name),
             });
         }
-
-        if let Some(captures) = EXTENDS_RE.captures(code) {
-            if let Some(resource_path) = captures.get(1).or_else(|| captures.get(2)) {
-                dependencies.push(DependencyReference {
-                    kind: DependencyKind::Extends,
-                    target: DependencyTarget::ResourcePath(resource_path.as_str().to_string()),
-                    line: line_number,
-                });
-            } else if let Some(class_name_match) = captures.get(3) {
-                dependencies.push(DependencyReference {
-                    kind: DependencyKind::Extends,
-                    target: DependencyTarget::NamedClass(class_name_match.as_str().to_string()),
-                    line: line_number,
-                });
-            }
-        }
-
-        for captures in PRELOAD_RE.captures_iter(code) {
-            if let Some(resource_path) = captures.get(1).or_else(|| captures.get(2)) {
-                dependencies.push(DependencyReference {
-                    kind: if in_const_initializer {
-                        DependencyKind::ConstPreload
-                    } else {
-                        DependencyKind::Preload
-                    },
-                    target: DependencyTarget::ResourcePath(resource_path.as_str().to_string()),
-                    line: line_number,
-                });
-            }
-        }
-
-        for captures in LOAD_RE.captures_iter(code) {
-            if let Some(resource_path) = captures.get(1).or_else(|| captures.get(2)) {
-                dependencies.push(DependencyReference {
-                    kind: DependencyKind::Load,
-                    target: DependencyTarget::ResourcePath(resource_path.as_str().to_string()),
-                    line: line_number,
-                });
-            }
-        }
-
-        if starts_const {
-            const_initializer_balance = code
-                .split_once('=')
-                .map(|(_, initializer)| delimiter_balance(initializer))
-                .unwrap_or(0)
-                .max(0);
-        } else if const_initializer_balance > 0 {
-            const_initializer_balance =
-                (const_initializer_balance + delimiter_balance(code)).max(0);
-        }
     }
+    dependencies.sort_by_key(|dependency| (dependency.line, kind_rank(&dependency.kind)));
+
+    let warnings = syntax_error_warning(tree)
+        .map(|(line, message)| ParserWarning {
+            file: path.to_string(),
+            line,
+            message,
+        })
+        .into_iter()
+        .collect();
 
     ParsedFile {
         class_name,
@@ -135,21 +107,38 @@ pub fn parse_file(_path: &str, content: &str) -> ParsedFile {
     }
 }
 
-fn strip_comments(line: &str) -> &str {
-    match line.find('#') {
-        Some(index) => &line[..index],
-        None => line,
+/// `extends` of the script, written alone or after `class_name`, and of
+/// inner classes, whether `extends` is on the `class` line or in its body.
+fn extends_dependency(tree: &SyntaxTree, extends: &Extends) -> Option<DependencyReference> {
+    let line = first_code_line(tree, extends.syntax()).unwrap_or(1);
+    let target = if let Some(path) = extends.path() {
+        DependencyTarget::ResourcePath(gdsyntax::literal::string_value(path.text())?)
+    } else {
+        DependencyTarget::NamedClass(extends.names().next()?.text().to_string())
+    };
+    Some(DependencyReference {
+        kind: DependencyKind::Extends,
+        target,
+        line,
+    })
+}
+
+/// `load` in `load(...)` or `ResourceLoader.load(...)`.
+fn callee_name(call: &CallExpr) -> Option<SyntaxToken> {
+    match call.callee()? {
+        Expr::Name(name) => name.name(),
+        Expr::Attribute(attribute) => attribute.name(),
+        _ => None,
     }
 }
 
-fn delimiter_balance(segment: &str) -> isize {
-    segment
-        .chars()
-        .fold(0isize, |balance, character| match character {
-            '(' | '[' | '{' => balance + 1,
-            ')' | ']' | '}' => balance - 1,
-            _ => balance,
-        })
+fn kind_rank(kind: &DependencyKind) -> u8 {
+    match kind {
+        DependencyKind::Extends => 0,
+        DependencyKind::Preload | DependencyKind::ConstPreload => 1,
+        DependencyKind::Load => 2,
+        DependencyKind::UnknownScriptReference => 3,
+    }
 }
 
 #[cfg(test)]
@@ -214,5 +203,57 @@ const _ITEMS: Array[ItemProfile] = [
                 .iter()
                 .all(|dependency| matches!(dependency.kind, DependencyKind::ConstPreload))
         );
+    }
+
+    #[test]
+    fn reads_multiline_calls_and_inline_class_name_extends() {
+        let parsed = parse_file(
+            "hud.gd",
+            "class_name Hud extends \"res://base_hud.gd\"\n\nconst SLOT: PackedScene = preload(\n\t\"res://slot.tscn\"\n)\nvar help = \"preload('res://not_code.gd')\"\n# load(\"res://commented.gd\")\n\nfunc _ready():\n\tvar theme = ResourceLoader.load(\"res://theme.tres\")\n\tvar icon = preload(\"res://icon.png\")\n\nclass Inner extends BaseThing:\n\tpass\n",
+        );
+        assert_eq!(
+            parsed
+                .class_name
+                .as_ref()
+                .map(|item| (item.name.as_str(), item.line)),
+            Some(("Hud", 1))
+        );
+        let dependencies = parsed
+            .dependencies
+            .iter()
+            .map(|dependency| {
+                let target = match &dependency.target {
+                    DependencyTarget::ResourcePath(path) => path.clone(),
+                    DependencyTarget::NamedClass(name) => name.clone(),
+                };
+                (format!("{:?}", dependency.kind), target, dependency.line)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            dependencies,
+            vec![
+                ("Extends".to_string(), "res://base_hud.gd".to_string(), 1),
+                ("ConstPreload".to_string(), "res://slot.tscn".to_string(), 3),
+                ("Load".to_string(), "res://theme.tres".to_string(), 10),
+                ("Preload".to_string(), "res://icon.png".to_string(), 11),
+                ("Extends".to_string(), "BaseThing".to_string(), 13),
+            ]
+        );
+        assert!(parsed.warnings.is_empty());
+    }
+
+    #[test]
+    fn warns_about_syntax_errors_and_keeps_the_rest() {
+        let parsed = parse_file(
+            "broken.gd",
+            "extends Node\nconst A = preload(\"res://a.gd\")\nfunc broken(:\n\tpass\nconst B = preload(\"res://b.gd\")\n",
+        );
+        assert_eq!(parsed.warnings.len(), 1);
+        assert_eq!(parsed.warnings[0].line, 3);
+        assert!(parsed.warnings[0].message.starts_with("syntax error: "));
+        assert!(parsed.dependencies.iter().any(|dependency| matches!(
+            dependency.target,
+            DependencyTarget::ResourcePath(ref path) if path == "res://b.gd"
+        )));
     }
 }

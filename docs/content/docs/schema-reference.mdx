@@ -119,13 +119,13 @@ Produced by `gdhealth metrics --format json` and `gdhealth health` (bundle).
 | Field | Type | Description |
 |---|---|---|
 | `file` | string | File containing this function |
-| `function_name` | string | Function identifier |
-| `start_line` | number | First line of the function |
-| `end_line` | number | Last line of the function |
-| `line_count` | number | Function length |
-| `branch_count` | number | Raw control-flow keyword count |
-| `cyclomatic_estimate` | number | Estimated cyclomatic complexity |
-| `max_nesting_depth` | number | Maximum indentation depth |
+| `function_name` | string | Function name; `<property>.set` / `<property>.get` for a property accessor |
+| `start_line` | number | Line of the `func` keyword (or of `set`/`get`) |
+| `end_line` | number | Last line of code in the function |
+| `line_count` | number | `end_line - start_line + 1` |
+| `branch_count` | number | Decisions: `if`, `elif`, `while`, `for`, `and`/`or`, ternaries, `when` guards, non-catch-all match patterns |
+| `cyclomatic_estimate` | number | `1 + branch_count` |
+| `max_nesting_depth` | number | Deepest nesting of `if`/`for`/`while`/`match` blocks |
 | `parameter_count` | number | Number of parameters |
 | `hotspot_score` | number | `cyclomatic × nesting × params × lines` |
 

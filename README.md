@@ -181,7 +181,8 @@ Advanced features (browser graph, DOT export, entity scan) are gdhealth-specific
 
 ## Current limits
 
-- The parser is text-based, not a full GDScript semantic parser
+- GDScript is parsed with [gdsyntax](https://crates.io/crates/gdsyntax), a port of Godot's parser, but there is no type or semantic analysis: signals and `class_name` references are matched by name
+- A file with syntax errors is still measured, minus the code the parser could not read; each such file gets a `syntax error` parser warning
 - Dynamic `load(variable)` calls are not resolved (only string-literal `load("res://...")` is)
 - Only `.gd` dependencies become graph edges (`.tres` resource references are tracked separately via `ExtResource` scanning)
 - Duplicate `class_name` declarations surface as parser warnings rather than being disambiguated

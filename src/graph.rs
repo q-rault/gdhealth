@@ -85,7 +85,12 @@ fn parse_project_files(root: &Path, files: &[ProjectFile]) -> Result<BTreeMap<St
                 path: absolute_path.clone(),
                 source,
             })?;
-        parsed.insert(file.path.clone(), parse_file(&file.path, &content));
+        let parsed_file = if file.path.ends_with(".gd") {
+            parse_file(&file.path, &content)
+        } else {
+            ParsedFile::default()
+        };
+        parsed.insert(file.path.clone(), parsed_file);
     }
 
     Ok(parsed)
