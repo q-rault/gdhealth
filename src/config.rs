@@ -30,6 +30,17 @@ pub struct Config {
 const SUITE_FILE: &str = "gdsuite.toml";
 const SUITE_SECTION: &str = "health";
 const OWN_FILE: &str = "gdhealth.toml";
+/// The sections of gdhealth.toml, which are the keys of `[health]`.
+const SUITE_SECTION_KEYS: &[&str] = &[
+    "project",
+    "discovery",
+    "groups",
+    "thresholds",
+    "policy",
+    "git",
+    "refactoring",
+    "duplication",
+];
 
 impl Config {
     /// Load the settings from `--config`, or else from the current folder:
@@ -100,6 +111,21 @@ impl Config {
         let Some(section) = table.remove(SUITE_SECTION) else {
             return Ok(None);
         };
+        // gdhealth.toml tolerates unknown keys, but in gdsuite.toml one would
+        // silently replace gdhealth.toml, as a [health] section written for
+        // gdsuite 0.1 (`command`, `fail_on`, `bundle_dir`) would.
+        if let Some(keys) = section.as_table() {
+            let known = SUITE_SECTION_KEYS;
+            if let Some(unknown) = keys.keys().find(|key| !known.contains(&key.as_str())) {
+                return Err(GdHealthError::InvalidConfig {
+                    message: format!(
+                        "{} [{SUITE_SECTION}]: unknown key `{unknown}`; expected one of {}.                          A [health] section from an older gdsuite is removed by `gdsuite migrate`",
+                        path.display(),
+                        known.join(", ")
+                    ),
+                });
+            }
+        }
         let config: Self =
             section
                 .try_into()
@@ -484,6 +510,26 @@ mod tests {
 
         let error = Config::load_from(&dir, Some(Path::new("gdsuite.toml"))).unwrap_err();
         assert!(error.to_string().contains("no [health] section"), "{error}");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_health_section_from_an_older_gdsuite_is_an_error() {
+        let dir = temp_dir("suite-legacy");
+        std::fs::write(dir.join("gdhealth.toml"), "").unwrap();
+        std::fs::write(
+            dir.join("gdsuite.toml"),
+            "[health]
+command = \"health\"
+fail_on = \"critical\"
+",
+        )
+        .unwrap();
+
+        let error = Config::load_from(&dir, None).unwrap_err().to_string();
+        assert!(error.contains("unknown key `command`"), "{error}");
+        assert!(error.contains("gdsuite migrate"), "{error}");
 
         std::fs::remove_dir_all(dir).unwrap();
     }
