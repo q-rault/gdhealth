@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push to a PR cancels the run of the previous one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: ${{ matrix.os }}
@@ -31,4 +36,5 @@ jobs:
       - run: cargo test --locked
       # In its own folder: packaging points the build tracking in target/ at the
       # packaged sources, and the cache would then keep later builds stale.
-      - run: cargo package --locked --target-dir "${{ runner.temp }}/package"
+      - if: runner.os == 'Linux'  # the packaged contents do not depend on the OS
+        run: cargo package --locked --target-dir "${{ runner.temp }}/package"

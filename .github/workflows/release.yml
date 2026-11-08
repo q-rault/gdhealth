@@ -137,3 +137,23 @@ jobs:
         with:
           files: artifacts/*
           generate_release_notes: true
+
+  notify-gdsuite:
+    name: Ask gdsuite to pin this release
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      # Starts gdsuite's pin-tools workflow, which opens or updates its pin PR.
+      # GDSUITE_TRIGGER_TOKEN can only start workflows in gdsuite (see gdsuite's
+      # RELEASING.md).
+      - name: Start gdsuite's pin-tools workflow
+        env:
+          GH_TOKEN: ${{ secrets.GDSUITE_TRIGGER_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::GDSUITE_TRIGGER_TOKEN is not set: run pin-tools in gdsuite by hand"
+            exit 0
+          fi
+          gh workflow run pin-tools.yml -R q-rault/gdsuite \
+            -f release="${{ github.event.repository.name }} ${GITHUB_REF_NAME}"
