@@ -4,11 +4,6 @@
 # Reports (generated output, not source)
 /reports/
 
-# Docs build artifacts
-/docs/.next/
-/docs/out/
-/docs/.source/
-/docs/node_modules/
 
 # Local agent notes
 /.ai/
