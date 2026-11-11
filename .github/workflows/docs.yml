@@ -49,6 +49,7 @@ jobs:
 
   build:
     needs: plan
+    if: needs.plan.outputs.builds != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
