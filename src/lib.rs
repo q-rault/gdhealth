@@ -34,12 +34,21 @@ fn try_handle_probe(args: &[std::ffi::OsString]) -> bool {
 }
 
 pub fn run() -> Result<()> {
-    let args: Vec<_> = std::env::args_os().collect();
+    run_from(std::env::args_os())
+}
+
+/// Runs the command line `args`, whose first item is the program name.
+pub fn run_from<I, T>(args: I) -> Result<()>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString>,
+{
+    let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
     if try_handle_probe(&args) {
         return Ok(());
     }
 
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(&args);
     let config = Config::load(cli.config.as_deref())?;
 
     match cli.command {
