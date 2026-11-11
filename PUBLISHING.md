@@ -43,3 +43,5 @@ Equivalent raw git commands:
 git tag -f v0.2.0
 git push origin -f v0.2.0
 ```
+
+The docs site is published from release and prerelease tags; see [docs/README.md](docs/README.md#published-versions).

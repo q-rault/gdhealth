@@ -1,27 +1,45 @@
 #!/usr/bin/env node
-// Decides which docs versions the deploy builds, from the repo's release tags
-// and main's Cargo.toml version. Prints `builds=<json>` and `versions=<json>`
-// for $GITHUB_OUTPUT. Run from the repository root with tags fetched.
+// Decides which docs versions the deploy builds. Prints `builds=<json>` and
+// `versions=<json>` for $GITHUB_OUTPUT. Run from the repository root with
+// tags fetched.
 //
-// - main's major equals the latest released major (or nothing is released):
-//   main is built at the site root as the stable docs.
-// - main's major is higher (a new major is being prepared): main goes to
-//   /next, and the root is built from the latest released major.
-// - every older released major gets /v<major>.
+// Every published version comes from a tag:
 //
-// A released major is built from the branch v<major>.x when it exists, so
-// docs fixes for it can land there, else from its latest release tag.
-// Refs whose docs predate static export are skipped.
+// - `/`        the latest release tag (vX.Y.Z), the stable docs.
+// - `/next`    the latest prerelease tag (vX.Y.Z-beta.1, -rc.1...), only
+//              while it is newer than the latest release: push a prerelease
+//              tag to publish a preview, release to retire it.
+// - `/v<N>`    the last release tag of major N, for each N listed in
+//              `archived_majors` in docs/versions.config.json on main. Remove
+//              a major from the list to unpublish it.
+//
+// Until a repository makes its first release with these docs, its latest
+// release tag cannot be built as a static site; the stable docs are then
+// built from main instead, and the next release ends that.
 
 import { execFileSync } from 'node:child_process';
 
 const mainRef = process.env.DOCS_MAIN_REF || 'origin/main';
-const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+const git = (...args) =>
+  execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
 function parse(text) {
   const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(text);
   if (!match) return null;
   return { major: +match[1], minor: +match[2], patch: +match[3], pre: match[4] ?? null };
+}
+
+function compareIdentifiers(a, b) {
+  const left = a.split('.');
+  const right = b.split('.');
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    if (left[i] === undefined) return -1;
+    if (right[i] === undefined) return 1;
+    const numeric = /^\d+$/.test(left[i]) && /^\d+$/.test(right[i]);
+    const order = numeric ? +left[i] - +right[i] : left[i].localeCompare(right[i]);
+    if (order !== 0) return order;
+  }
+  return 0;
 }
 
 function compare(a, b) {
@@ -31,7 +49,7 @@ function compare(a, b) {
   if (a.pre === b.pre) return 0;
   if (a.pre === null) return 1;
   if (b.pre === null) return -1;
-  return a.pre < b.pre ? -1 : 1;
+  return compareIdentifiers(a.pre, b.pre);
 }
 
 function cargoVersion(ref) {
@@ -41,7 +59,7 @@ function cargoVersion(ref) {
   return match[1];
 }
 
-function supportsStaticExport(ref) {
+function buildable(ref) {
   try {
     return git('show', `${ref}:docs/next.config.mjs`).includes("output: 'export'");
   } catch {
@@ -49,53 +67,69 @@ function supportsStaticExport(ref) {
   }
 }
 
-const releases = git('tag', '--list', 'v*')
+function readConfig() {
+  try {
+    return JSON.parse(git('show', `${mainRef}:docs/versions.config.json`));
+  } catch {
+    return {};
+  }
+}
+
+const tags = git('tag', '--list', 'v*')
   .split('\n')
   .filter(Boolean)
   .map((tag) => ({ tag, version: parse(tag) }))
-  .filter((entry) => entry.version && entry.version.pre === null)
+  .filter((entry) => entry.version)
   .sort((a, b) => compare(a.version, b.version));
-
-const maintenanceBranches = new Set(
-  git('branch', '--remotes', '--list', 'origin/v*.x')
-    .split('\n')
-    .map((line) => line.trim().replace(/^origin\//, ''))
-    .filter(Boolean),
-);
-
-function refForMajor(major) {
-  const branch = `v${major}.x`;
-  if (maintenanceBranches.has(branch)) return `origin/${branch}`;
-  return releases.filter((entry) => entry.version.major === major).at(-1).tag;
-}
-
-const main = parse(cargoVersion(mainRef));
-const releasedMajors = [...new Set(releases.map((entry) => entry.version.major))].sort((a, b) => b - a);
-const stableMajor = releasedMajors[0] ?? main.major;
-
-const candidates = [];
-if (main.major > stableMajor) {
-  candidates.push({ ref: refForMajor(stableMajor), path: '', channel: 'stable' });
-  candidates.push({ ref: mainRef, path: 'next', channel: 'next' });
-} else {
-  candidates.push({ ref: mainRef, path: '', channel: 'stable' });
-}
-for (const major of releasedMajors.filter((major) => major < stableMajor)) {
-  candidates.push({ ref: refForMajor(major), path: `v${major}`, channel: 'archived' });
-}
+const releases = tags.filter((entry) => entry.version.pre === null);
+const latest = releases.at(-1);
 
 const builds = [];
-for (const candidate of candidates) {
-  if (!supportsStaticExport(candidate.ref)) {
-    console.error(`skipping ${candidate.ref}: its docs do not build as a static export`);
-    continue;
-  }
+function add(ref, path, channel) {
   builds.push({
-    ...candidate,
-    ref: git('rev-parse', `${candidate.ref}^{commit}`),
-    label: cargoVersion(candidate.ref),
-    artifact: `docs-${candidate.path || 'root'}`,
+    ref: git('rev-parse', `${ref}^{commit}`),
+    path,
+    channel,
+    label: cargoVersion(ref),
+    artifact: `docs-${path || 'root'}`,
+    // Built from main rather than a tag (see the header).
+    main: ref === mainRef,
   });
+}
+
+// Stable.
+if (latest && buildable(latest.tag)) {
+  add(latest.tag, '', 'stable');
+} else {
+  console.error(
+    latest
+      ? `${latest.tag} predates the static docs: building the stable docs from main until the next release`
+      : 'no release yet: building the stable docs from main',
+  );
+  add(mainRef, '', 'stable');
+}
+
+// Preview.
+const preview = tags.at(-1);
+if (preview && preview.version.pre !== null && (!latest || compare(preview.version, latest.version) > 0)) {
+  if (buildable(preview.tag)) add(preview.tag, 'next', 'next');
+  else console.error(`skipping ${preview.tag}: its docs do not build as a static site`);
+}
+
+// Archived majors.
+const archived = [...new Set(readConfig().archived_majors ?? [])].sort((a, b) => b - a);
+for (const major of archived) {
+  const last = releases.filter((entry) => entry.version.major === major).at(-1);
+  if (!last) {
+    console.error(`archived_majors: no release of major ${major}, skipping it`);
+  } else if (major >= latest.version.major) {
+    // `last` exists, so `latest` does too.
+    console.error(`archived_majors: ${major} is the stable major, skipping it`);
+  } else if (!buildable(last.tag)) {
+    console.error(`archived_majors: ${last.tag} predates the static docs, skipping it`);
+  } else {
+    add(last.tag, `v${major}`, 'archived');
+  }
 }
 
 const versions = builds.map(({ label, channel, path }) => ({ label, channel, path }));

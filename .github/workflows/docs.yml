@@ -1,9 +1,11 @@
 name: docs
 # Only on main, release tags and PRs, and only when the docs or the files they
 # quote change: a plain `push` trigger also ran twice on each PR push.
-# PRs build their own docs; main and tags rebuild every published version
-# (stable at the root, /next, /v<major>, see docs/scripts/docs-versions.mjs)
-# and deploy them to GitHub Pages. A tag can change which version is stable.
+# PRs build their own docs. Release and prerelease tags, and changes on main
+# to the docs or docs/versions.config.json, rebuild every published version
+# and deploy them to GitHub Pages: the latest release at the root, the latest
+# prerelease at /next while it is newer, and the majors listed in
+# docs/versions.config.json at /v<major> (see docs/scripts/docs-versions.mjs).
 on:
   push:
     branches: [main]
@@ -77,6 +79,11 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: [plan, build]
     runs-on: ubuntu-latest
+    # One deploy at a time: a release pushes main and a tag together, and the
+    # run for the tag, which sees the new release, must not be cancelled.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write

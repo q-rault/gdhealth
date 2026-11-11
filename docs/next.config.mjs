@@ -3,10 +3,10 @@ import { createMDX } from 'fumadocs-mdx/next';
 
 const withMDX = createMDX();
 
-// The site lives at https://q-rault.github.io/gdhealth/. Each docs version is
-// its own static build under that root: the stable release at the root, an
-// older major under /v0, an unreleased major under /next (see
-// scripts/docs-versions.mjs). Set DOCS_SITE_ROOT='' for a domain root.
+// The site lives at https://q-rault.github.io/gdhealth/. Each docs version is its own
+// static build under that root: the stable release at the root, a preview at
+// /next, kept older majors at /v<major> (see scripts/docs-versions.mjs). Set
+// DOCS_SITE_ROOT='' for a domain root.
 const siteRoot = process.env.DOCS_SITE_ROOT ?? '/gdhealth';
 const versionPath = process.env.DOCS_VERSION_PATH ?? '';
 const basePath = versionPath ? `${siteRoot}/${versionPath}` : siteRoot;

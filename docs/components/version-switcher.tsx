@@ -23,7 +23,7 @@ function versionUrl(path: string, pathname: string) {
 
 function describe(version: DocsVersion) {
   if (version.channel === 'stable') return `v${version.label} (latest)`;
-  if (version.channel === 'next') return `v${version.label} (next)`;
+  if (version.channel === 'next') return `v${version.label} (preview)`;
   return `v${version.label}`;
 }
 
@@ -46,7 +46,7 @@ export function VersionSwitcher() {
     return (
       <div className="px-2 text-xs text-fd-muted-foreground">
         v{VERSION}
-        {CHANNEL === 'next' && ' (next)'}
+        {CHANNEL === 'next' && ' (preview)'}
       </div>
     );
   }
@@ -78,14 +78,14 @@ export function VersionNotice() {
 
   const text =
     CHANNEL === 'next'
-      ? `These docs are for v${VERSION}, which is not released yet.`
+      ? `This is a preview of v${VERSION}, which is not released yet.`
       : `These docs are for v${VERSION}, an older major version.`;
 
   return (
     <div className="mb-6 rounded-lg border border-fd-border bg-fd-card px-4 py-3 text-sm">
       {text}{' '}
       <a className="font-medium underline" href={versionUrl('', pathname)}>
-        Go to the latest release
+        Go to the stable docs
       </a>
       .
     </div>
