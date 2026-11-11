@@ -1,17 +1,25 @@
 name: docs
-# Only on main and PRs, and only when the docs or the files they quote change:
-# a plain `push` trigger also ran on every tag and twice on each PR push.
+# Only on main, release tags and PRs, and only when the docs or the files they
+# quote change: a plain `push` trigger also ran twice on each PR push.
+# PRs build their own docs. Release and prerelease tags, and changes on main
+# to the docs or docs/versions.config.json, rebuild every published version
+# and deploy them to GitHub Pages: the latest release at the root, the latest
+# prerelease at /next while it is newer, and the majors listed in
+# docs/versions.config.json at /v<major> (see docs/scripts/docs-versions.mjs).
 on:
   push:
     branches: [main]
+    tags: ['v*']
     paths:
       - 'docs/**'
       - 'tests/docs/**'
+      - Cargo.toml
       - .github/workflows/docs.yml
   pull_request:
     paths:
       - 'docs/**'
       - 'tests/docs/**'
+      - Cargo.toml
       - .github/workflows/docs.yml
   workflow_dispatch:
 
@@ -20,11 +28,86 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      builds: ${{ steps.plan.outputs.builds }}
+      versions: ${{ steps.plan.outputs.versions }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          DOCS_MAIN_REF: ${{ github.event_name == 'pull_request' && github.sha || 'origin/main' }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          if [ "$IS_PR" = true ]; then
+            echo "builds=[{\"ref\":\"$DOCS_MAIN_REF\",\"path\":\"\",\"channel\":\"stable\",\"artifact\":\"docs-root\"}]" >> "$GITHUB_OUTPUT"
+            echo 'versions={"versions":[]}' >> "$GITHUB_OUTPUT"
+          else
+            node docs/scripts/docs-versions.mjs >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.builds != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ matrix.ref }}
       - uses: actions/setup-node@v5
         with:
           node-version: 20
-      - run: cd docs && npm ci && npm run build
+      - run: npm ci && npm run build
+        working-directory: docs
+        env:
+          DOCS_VERSION_PATH: ${{ matrix.path }}
+          DOCS_CHANNEL: ${{ matrix.channel }}
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: docs/out
+          retention-days: 1
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    # One deploy at a time: a release pushes main and a tag together, and the
+    # run for the tag, which sees the new release, must not be cancelled.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: docs-*
+          path: builds
+      - name: Assemble the versions into one site
+        env:
+          BUILDS: ${{ needs.plan.outputs.builds }}
+          VERSIONS: ${{ needs.plan.outputs.versions }}
+        run: |
+          mkdir site
+          echo "$BUILDS" | jq -r '.[] | "\(.artifact) \(.path)"' | while read -r artifact path; do
+            mkdir -p "site/$path"
+            cp -r "builds/$artifact/." "site/$path/"
+          done
+          echo "$VERSIONS" > site/versions.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

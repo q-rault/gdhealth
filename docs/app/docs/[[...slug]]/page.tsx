@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { source } from '@/lib/source';
+import { VersionNotice } from '@/components/version-switcher';
 
 export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
@@ -15,6 +16,7 @@ export default async function Page(props: {
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
+      <VersionNotice />
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>

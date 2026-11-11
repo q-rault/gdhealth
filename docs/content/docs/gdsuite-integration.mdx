@@ -7,13 +7,23 @@ description: How gdsuite health uses gdhealth as its backend and what the integr
 
 ## What gdsuite health invokes
 
+`gdsuite health` and the health step of `gdsuite check` run, from the project
+root:
+
 ```sh
-gdhealth health --root <project_root> [--fail-on critical]
+gdhealth health
 ```
 
-`gdhealth health` is the canonical backend command. It produces the full report bundle in a single invocation and exposes the right exit-code semantics for CI.
+`gdhealth health` is the canonical backend command. It produces the full report bundle in a single invocation and exposes the right exit-code semantics for CI. gdhealth reads its settings from the `[health]` section of `gdsuite.toml` (see [Configuration](/docs/configuration)).
 
-For compatibility checks, gdsuite may also probe:
+To pass other subcommands or flags, put them after `--`; gdsuite forwards them unchanged:
+
+```sh
+gdsuite health -- health --fail-on critical
+gdsuite health -- graph --format emerge-html --output graph.html
+```
+
+`gdsuite setup` and `gdsuite doctor` also probe the installed version and its schema version:
 
 ```sh
 gdhealth --version

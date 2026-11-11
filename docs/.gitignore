@@ -1,0 +1,7 @@
+# Next.js and Fumadocs build output
+.next/
+.source/
+out/
+node_modules/
+next-env.d.ts
+*.tsbuildinfo
