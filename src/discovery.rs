@@ -7,6 +7,9 @@ use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
 
+/// Walks the project root for files matching `[discovery]`. Hidden folders,
+/// folders containing a `.gdignore`, and nested Godot projects (folders with
+/// their own `project.godot`) are always skipped, as Godot's editor does.
 pub fn discover_files(config: &Config, options: &CommandOptions) -> Result<Vec<ProjectFile>> {
     let include_set = compile_globs(&config.discovery.include)?;
     let exclude_set = compile_globs(&config.discovery.exclude)?;
@@ -15,6 +18,7 @@ pub fn discover_files(config: &Config, options: &CommandOptions) -> Result<Vec<P
 
     for entry in WalkDir::new(root)
         .into_iter()
+        .filter_entry(|entry| entry.depth() == 0 || !is_skipped_dir(entry))
         .filter_map(std::result::Result::ok)
         .filter(|entry| entry.file_type().is_file())
     {
@@ -51,6 +55,16 @@ pub fn discover_files(config: &Config, options: &CommandOptions) -> Result<Vec<P
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(files)
+}
+
+fn is_skipped_dir(entry: &walkdir::DirEntry) -> bool {
+    if !entry.file_type().is_dir() {
+        return false;
+    }
+    let path = entry.path();
+    entry.file_name().to_string_lossy().starts_with('.')
+        || path.join(".gdignore").exists()
+        || path.join("project.godot").exists()
 }
 
 pub fn normalize_path(path: &Path) -> String {
