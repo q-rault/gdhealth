@@ -1,10 +1,11 @@
-name: release
+# Keep the file name release.yml: crates.io trusted publishing is set up for it.
+name: Publish release
 
 on:
   push:
     tags:
       - 'v[0-9]*'
-  # new-release.yml starts it this way, on the tag it pushed: a tag pushed with
+  # Cut release (cut-release.yml) starts it this way, on the tag it pushed: a tag pushed with
   # the default token does not trigger `push`.
   workflow_dispatch:
 

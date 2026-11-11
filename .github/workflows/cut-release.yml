@@ -1,10 +1,10 @@
-# Cuts a release from the Actions tab: Actions > new-release > Run workflow.
+# Cuts a release from the Actions tab: Actions > Cut release > Run workflow.
 # It bumps every version-bearing file (scripts/release.py bump) and Cargo.lock,
 # runs the tests, commits `release: v<version>` to main, pushes the tag, then
-# starts release.yml on that tag (crates.io, archives, GitHub release) and
+# starts Publish release (release.yml) on that tag (crates.io, archives, GitHub release) and
 # docs.yml. A tag pushed with the default token starts no workflow, hence the
 # explicit `gh workflow run`. See PUBLISHING.md for how the version is picked.
-name: new-release
+name: Cut release
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: new-release
+  group: cut-release
 
 jobs:
   release:
@@ -113,7 +113,7 @@ jobs:
         run: |
           gh workflow run release.yml --ref "v${VERSION}"
           gh workflow run docs.yml --ref main
-          echo "Started [release](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/release.yml) for v${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Started [Publish release](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/release.yml) for v${VERSION}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dry run summary
         if: ${{ inputs.dry_run }}

@@ -1,12 +1,12 @@
 # Publishing
 
-`gdhealth` releases are tag-driven. Pushing a `v<version>` tag starts `.github/workflows/release.yml`, which checks that the tag matches the version in `Cargo.toml`, publishes to crates.io (trusted publishing, no token), builds the archives, then creates the GitHub release. Tags with a prerelease suffix (`v0.4.0-rc.1`) become GitHub prereleases and are not sent to gdsuite.
+`gdhealth` releases are tag-driven. Pushing a `v<version>` tag starts **Publish release** (`.github/workflows/release.yml`), which checks that the tag matches the version in `Cargo.toml`, publishes to crates.io (trusted publishing, no token), builds the archives, then creates the GitHub release. Tags with a prerelease suffix (`v0.4.0-rc.1`) become GitHub prereleases and are not sent to gdsuite.
 
 The version source of truth is the committed repo state: `Cargo.toml`, `Cargo.lock` and the version-bearing docs and example files that `scripts/release.py bump` updates.
 
 ## Release from GitHub
 
-**Actions → new-release → Run workflow**, on `main`:
+**Actions → Cut release → Run workflow**, on `main`:
 
 | Input | Values |
 | --- | --- |
@@ -15,7 +15,7 @@ The version source of truth is the committed repo state: `Cargo.toml`, `Cargo.lo
 | version | an exact version instead, such as `0.4.0-rc.1` (overrides the two above) |
 | dry run | pick the version and run the tests, push nothing |
 
-It bumps the files and `Cargo.lock`, runs the tests, commits `release: v<version>` to `main`, pushes the tag and starts `release.yml` and `docs.yml`. The run summary shows the version it picked.
+It bumps the files and `Cargo.lock`, runs the tests, commits `release: v<version>` to `main`, pushes the tag and starts Publish release and `docs.yml`. The run summary shows the version it picked.
 
 How the version is picked, from the current one:
 
@@ -53,9 +53,9 @@ just release 0.2.0-beta.1
 
 ## Failed release recovery
 
-If the GitHub release workflow fails but the tag already points to the correct release commit, prefer fixing the workflow and re-running the job.
+If Publish release fails but the tag already points to the correct release commit, prefer fixing the workflow and re-running the job.
 
-If the fix requires a new commit and the original release did not publish to crates.io, move the same tag to the new commit instead of inventing a patch version. Pushing the moved tag starts `release.yml` again:
+If the fix requires a new commit and the original release did not publish to crates.io, move the same tag to the new commit instead of inventing a patch version. Pushing the moved tag starts Publish release again:
 
 ```sh
 just retag-release 0.2.0
