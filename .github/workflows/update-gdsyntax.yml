@@ -1,0 +1,99 @@
+# Keeps one PR open that moves gdsyntax to its latest stable release, on the
+# `auto/update-gdsyntax` branch: the `gdsyntax = "..."` requirement in
+# Cargo.toml and Cargo.lock. A newer gdsyntax release updates the same PR.
+#
+# gdsyntax's Publish release starts this workflow after each stable release
+# (with gdsyntax's DEPENDENTS_TRIGGER_TOKEN secret). It can also be run from
+# the Actions tab.
+#
+# Needs the DEPENDENCY_PR_TOKEN secret (see PUBLISHING.md): a PR pushed with
+# the default token would not run CI.
+name: Update gdsyntax
+run-name: Update gdsyntax${{ inputs.release && format(' after {0}', inputs.release) || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: The gdsyntax release that started this run (only names the run)
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-gdsyntax
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      HAS_PR_TOKEN: ${{ secrets.DEPENDENCY_PR_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Move gdsyntax to its latest release
+        id: update
+        run: |
+          repo="${GITHUB_REPOSITORY#*/}"
+          # crates.io asks API clients for a User-Agent naming them.
+          latest=$(curl -fsSL -A "${repo}-update-gdsyntax (github.com/${GITHUB_REPOSITORY})" \
+            https://crates.io/api/v1/crates/gdsyntax | jq -r .crate.max_stable_version)
+          required=$(sed -n -E 's/^gdsyntax = "([^"]+)"$/\1/p' Cargo.toml)
+          locked=$(cargo metadata --format-version 1 --locked | jq -r '.packages[] | select(.name == "gdsyntax") | .version')
+          echo "gdsyntax: required ${required}, locked ${locked}, latest ${latest}"
+          if [ -z "$required" ]; then
+            echo "::error::Cargo.toml has no gdsyntax = \"X.Y.Z\" line"
+            exit 1
+          fi
+          if [ "$required" = "$latest" ] && [ "$locked" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "gdsyntax is already at its latest release, ${latest}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          sed -i -E "s/^gdsyntax = \"[^\"]+\"$/gdsyntax = \"${latest}\"/" Cargo.toml
+          # The crates.io index can lag a little behind a release.
+          for attempt in $(seq 1 20); do
+            if cargo update -p gdsyntax --precise "$latest"; then break; fi
+            if [ "$attempt" = 20 ]; then exit 1; fi
+            sleep 30
+          done
+
+          {
+            echo "changed=true"
+            echo "title=Update gdsyntax to ${latest}"
+            echo "body<<BODY_END"
+            echo "Moves gdsyntax from ${locked} to [${latest}](https://github.com/q-rault/gdsyntax/releases/tag/v${latest})."
+            echo
+            echo "If CI fails, the new gdsyntax needs changes here: push them to this branch."
+            echo "Merging does not release ${repo}: run Cut release for that."
+            echo "BODY_END"
+          } >> "$GITHUB_OUTPUT"
+          echo "gdsyntax ${locked} → ${latest}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check the PR token
+        if: steps.update.outputs.changed == 'true' && env.HAS_PR_TOKEN != 'true'
+        run: echo "::warning::DEPENDENCY_PR_TOKEN is not set, so CI will not run on the PR (see PUBLISHING.md)"
+
+      - name: Open or update the PR
+        if: steps.update.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.DEPENDENCY_PR_TOKEN || github.token }}
+          branch: auto/update-gdsyntax
+          base: main
+          title: ${{ steps.update.outputs.title }}
+          body: ${{ steps.update.outputs.body }}
+          commit-message: ${{ steps.update.outputs.title }}
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          add-paths: |
+            Cargo.toml
+            Cargo.lock
+          delete-branch: true

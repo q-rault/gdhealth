@@ -1,6 +1,5 @@
 import pathlib
 import re
-import subprocess
 import sys
 
 
@@ -21,20 +20,6 @@ def replace(path: str, pattern: str, repl: str, *, flags: int = re.MULTILINE, co
         raise SystemExit(f"ERROR: pattern not found in {path}")
     file_path.write_bytes(text.encode("utf8"))
     print(f"  {path}")
-
-
-def check_clean_git() -> None:
-    result = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if result.stdout.strip():
-        sys.stderr.write("ERROR: working tree must be clean before release\n")
-        sys.stderr.write(result.stdout)
-        raise SystemExit(1)
 
 
 def check_release_version(version: str) -> None:
@@ -95,7 +80,6 @@ def bump(version: str) -> None:
     replace("tests/docs/example_output/godot-open-rpg-health.json", r'("tool_version"\s*:\s*)"[^"]+"', f'\\g<1>"{version}"')
     replace("docs/content/docs/showcase.mdx", r'("tool_version":\s*)"[^"]+"', f'\\g<1>"{version}"', count=2)
     replace("docs/content/docs/schema-reference.mdx", r'("tool_version":\s*)"[^"]+"', f'\\g<1>"{version}"')
-    print("done - run `just check-version-sync` before releasing")
 
 
 PRE_KINDS = ("alpha", "beta", "rc")
@@ -149,11 +133,9 @@ def next_version(current: str, level: str, pre: str) -> str:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        raise SystemExit("usage: python scripts/release.py <command> [version]")
+        raise SystemExit("usage: python scripts/release.py <bump VERSION|check-release-version VERSION|check-version-sync|next-version LEVEL [PRE]>")
     command = argv[1]
-    if command == "check-clean-git":
-        check_clean_git()
-    elif command == "check-release-version":
+    if command == "check-release-version":
         check_release_version(argv[2])
     elif command == "check-version-sync":
         check_version_sync()
