@@ -1,13 +1,26 @@
 ---
 title: Installation
-description: Install gdhealth from crates.io or from source.
+description: Install gdhealth from a release binary, crates.io, or source.
 ---
 
-## Requirements
+## Download a release binary
 
-- Rust 1.96 or later (`rustup update stable` to upgrade)
+Each [GitHub release](https://github.com/q-rault/gdhealth/releases) has a
+binary for each platform, no Rust needed:
+
+| Platform | Archive |
+| --- | --- |
+| macOS arm64 | `gdhealth-*-aarch64-apple-darwin.tar.gz` |
+| macOS x86_64 | `gdhealth-*-x86_64-apple-darwin.tar.gz` |
+| Linux x86_64 | `gdhealth-*-x86_64-unknown-linux-musl.tar.gz` |
+| Windows x86_64 | `gdhealth-*-x86_64-pc-windows-msvc.zip` |
+
+Put the `gdhealth` binary on your `PATH`. With [gdsuite](https://github.com/q-rault/gdsuite),
+`gdsuite setup` downloads the version it was tested with for you.
 
 ## Install from crates.io
+
+Requires Rust 1.96 or later (`rustup update stable` to upgrade).
 
 ```sh
 cargo install gdhealth
