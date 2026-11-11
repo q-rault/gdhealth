@@ -98,6 +98,55 @@ def bump(version: str) -> None:
     print("done - run `just check-version-sync` before releasing")
 
 
+PRE_KINDS = ("alpha", "beta", "rc")
+PARTS_RE = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)(?:-(alpha|beta|rc)\.([0-9]+))?")
+
+
+def next_version(current: str, level: str, pre: str) -> str:
+    """The version after `current` for a `level` bump (patch, minor, major),
+    as a prerelease when `pre` is alpha, beta or rc, else a release.
+
+    From a release, the level bump comes first: 0.3.2 + minor + beta -> 0.4.0-beta.1.
+    From a prerelease, a level whose bump already leads to its version stays on it:
+    0.4.0-beta.1 + minor + beta -> 0.4.0-beta.2, + rc -> 0.4.0-rc.1, + none -> 0.4.0.
+    A level it does not cover starts a new version: 0.4.0-rc.1 + major -> 1.0.0.
+    """
+    if level not in ("patch", "minor", "major"):
+        raise SystemExit(f"ERROR: unknown bump '{level}', expected patch, minor or major")
+    if pre not in ("none", *PRE_KINDS):
+        raise SystemExit(f"ERROR: unknown prerelease '{pre}', expected none, alpha, beta or rc")
+    match = PARTS_RE.fullmatch(current)
+    if match is None:
+        raise SystemExit(f"ERROR: cannot bump '{current}': expected X.Y.Z or X.Y.Z-(alpha|beta|rc).N")
+    major, minor, patch = (int(part) for part in match.group(1, 2, 3))
+    cur_pre, cur_num = match.group(4), int(match.group(5) or 0)
+
+    # A prerelease of X.Y.Z already counts as a bump to X.Y.Z when the level
+    # does not reach further: any level for X.0.0, minor or patch for X.Y.0.
+    stays = cur_pre is not None and (
+        level == "patch"
+        or (level == "minor" and patch == 0)
+        or (level == "major" and minor == 0 and patch == 0)
+    )
+    if not stays:
+        if level == "major":
+            major, minor, patch = major + 1, 0, 0
+        elif level == "minor":
+            minor, patch = minor + 1, 0
+        else:
+            patch += 1
+
+    core = f"{major}.{minor}.{patch}"
+    if pre == "none":
+        return core
+    if stays:
+        if PRE_KINDS.index(pre) < PRE_KINDS.index(cur_pre):
+            raise SystemExit(f"ERROR: {current} is already past {pre}: pick {cur_pre} or later")
+        if pre == cur_pre:
+            return f"{core}-{pre}.{cur_num + 1}"
+    return f"{core}-{pre}.1"
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         raise SystemExit("usage: python scripts/release.py <command> [version]")
@@ -110,6 +159,9 @@ def main(argv: list[str]) -> int:
         check_version_sync()
     elif command == "bump":
         bump(argv[2])
+    elif command == "next-version":
+        # next-version <patch|minor|major> [none|alpha|beta|rc]
+        print(next_version(cargo_version(), argv[2], argv[3] if len(argv) > 3 else "none"))
     else:
         raise SystemExit(f"unknown command: {command}")
     return 0

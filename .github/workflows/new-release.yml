@@ -1,0 +1,121 @@
+# Cuts a release from the Actions tab: Actions > new-release > Run workflow.
+# It bumps every version-bearing file (scripts/release.py bump) and Cargo.lock,
+# runs the tests, commits `release: v<version>` to main, pushes the tag, then
+# starts release.yml on that tag (crates.io, archives, GitHub release) and
+# docs.yml. A tag pushed with the default token starts no workflow, hence the
+# explicit `gh workflow run`. See PUBLISHING.md for how the version is picked.
+name: new-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Number to bump: patch (0.3.2 → 0.3.3), minor (→ 0.4.0) or major (→ 1.0.0)'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      pre:
+        description: 'Prerelease: none for a stable release, or alpha / beta / rc (→ 0.4.0-rc.1)'
+        type: choice
+        options: [none, alpha, beta, rc]
+        default: none
+      version:
+        description: 'Exact version instead, such as 0.4.0-rc.1 (leave empty to use the two choices above)'
+        type: string
+        required: false
+      dry_run:
+        description: 'Dry run: pick the version and run the tests, but push nothing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: new-release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the branch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run this workflow on main, not ${GITHUB_REF_NAME}"
+          exit 1
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-v2-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Pick the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          PRE: ${{ inputs.pre }}
+          EXACT: ${{ inputs.version }}
+        run: |
+          current=$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "gdhealth") | .version')
+          if [ -n "$EXACT" ]; then
+            version="${EXACT#v}"
+            python3 scripts/release.py check-release-version "$version"
+          else
+            version=$(python3 scripts/release.py next-version "$BUMP" "$PRE")
+          fi
+          if git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
+            echo "::error::v${version} is already tagged"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "### ${current} → ${version}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Releasing ${current} → ${version}"
+
+      - name: Bump the version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 scripts/release.py bump "$VERSION"
+          cargo update --workspace
+          python3 scripts/release.py check-version-sync
+          git diff --stat
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Commit, tag and push
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "release: v${VERSION}"
+          git tag -a "v${VERSION}" -m "gdhealth v${VERSION}"
+          # Atomic: if main moved since the checkout, neither the commit nor the tag lands.
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v${VERSION}"
+
+      - name: Start the release and docs workflows
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh workflow run release.yml --ref "v${VERSION}"
+          gh workflow run docs.yml --ref main
+          echo "Started [release](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/release.yml) for v${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dry run summary
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "Dry run: nothing was pushed." >> "$GITHUB_STEP_SUMMARY"
