@@ -12,6 +12,28 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # fmt and clippy run once, here, for all three release OSes: clippy only
+  # type-checks, so it lints the Windows and macOS code (cfg(windows) and the
+  # like) from Linux without their linkers. The OS jobs below only test.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: x86_64-pc-windows-msvc, aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo fmt --all --check
+      - name: clippy (Linux)
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: clippy (Windows)
+        run: cargo clippy --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+      - name: clippy (macOS)
+        run: cargo clippy --all-targets --locked --target aarch64-apple-darwin -- -D warnings
+
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -22,17 +44,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      # Restores the closest older cache when Cargo.lock changes, and saves a
+      # fresh one from main only (PR caches are not visible to other PRs).
+      - uses: Swatinem/rust-cache@v2
         with:
-          components: clippy, rustfmt
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-v2-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets --locked -- -D warnings
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --locked
       # In its own folder: packaging points the build tracking in target/ at the
       # packaged sources, and the cache would then keep later builds stale.
