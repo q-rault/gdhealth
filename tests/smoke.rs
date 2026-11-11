@@ -721,6 +721,40 @@ fn empty_project_exits_zero() {
     fs::remove_dir_all(&fixture_root).ok();
 }
 
+#[test]
+fn discovery_skips_hidden_gdignore_and_nested_project_folders() {
+    let fixture_root = unique_temp_dir("gdhealth-discovery-skips");
+    write_repo(
+        &fixture_root,
+        &bundle_config("warning", "[]"),
+        &[
+            ("main.gd", "extends Node"),
+            (".gdsuite/gdtest/runner.gd", "extends Node"),
+            ("ignored/.gdignore", ""),
+            ("ignored/skipped.gd", "extends Node"),
+            ("nested/project.godot", ""),
+            ("nested/skipped.gd", "extends Node"),
+            ("nested/deeper/skipped.gd", "extends Node"),
+        ],
+    );
+
+    let output = run_gdhealth(&fixture_root, &["health", "--root", "."]);
+    assert_success(&output);
+
+    let health_json: Value = serde_json::from_str(
+        &fs::read_to_string(fixture_root.join("reports/code-health/health.json"))
+            .expect("read health.json"),
+    )
+    .expect("parse health.json");
+    assert_eq!(
+        health_json["summary"]["file_count"].as_u64(),
+        Some(1),
+        "only main.gd should be discovered: {health_json}"
+    );
+
+    fs::remove_dir_all(&fixture_root).ok();
+}
+
 // ── parser warnings test ─────────────────────────────────────────────────────
 
 #[test]

@@ -42,6 +42,8 @@ Controls which files are discovered and analyzed.
 
 Patterns prefixed with `!` inside an `include` list act as negations. Patterns are matched against project-relative paths.
 
+Whatever the patterns say, discovery never enters hidden folders (names starting with `.`, such as `.godot/`, `.git/` or the `.gdsuite/` folder that gdsuite installs), folders containing a `.gdignore` file, or nested Godot projects (folders with their own `project.godot`). This matches what Godot's editor, gdtidy and gdtest skip.
+
 ---
 
 ## `[groups]`
